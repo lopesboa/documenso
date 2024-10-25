@@ -15,7 +15,7 @@ export default function SignatureDisclosure() {
 
         <h2>Welcome</h2>
         <p>
-          Thank you for using Documenso to perform your electronic document signing. The purpose of
+          Thank you for using AssinaAi to perform your electronic document signing. The purpose of
           this disclosure is to inform you about the process, legality, and your rights regarding
           the use of electronic signatures on our platform. By opting to use an electronic
           signature, you are agreeing to the terms and conditions outlined below.
@@ -66,9 +66,9 @@ export default function SignatureDisclosure() {
           You have the right to withdraw your consent to use electronic signatures at any time
           before completing the signing process. To withdraw your consent, please contact the sender
           of the document. In failing to contact the sender you may reach out to{' '}
-          <a href="mailto:support@documenso.com">support@documenso.com</a> for assistance. Be aware
-          that withdrawing consent may delay or halt the completion of the related transaction or
-          service.
+          <a href="mailto:support@bakongostudio.com.br">support@bakongostudio.com.br</a> for
+          assistance. Be aware that withdrawing consent may delay or halt the completion of the
+          related transaction or service.
         </p>
 
         <h2>Updating Your Information</h2>
@@ -99,7 +99,7 @@ export default function SignatureDisclosure() {
         <p>
           For any questions regarding this disclosure, electronic signatures, or any related
           process, please contact us at:{' '}
-          <a href="mailto:support@documenso.com">support@documenso.com</a>
+          <a href="mailto:support@bakongostudio.com.br">support@bakongostudio.com.br</a>
         </p>
       </article>
 

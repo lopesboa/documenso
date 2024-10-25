@@ -15,12 +15,12 @@ import { useFieldArray, useForm } from 'react-hook-form';
 import { ZRecipientAuthOptionsSchema } from '@documenso/lib/types/document-auth';
 import { nanoid } from '@documenso/lib/universal/id';
 import { generateRecipientPlaceholder } from '@documenso/lib/utils/templates';
-import type { TemplateDirectLink } from '@documenso/prisma/client';
 import {
   DocumentSigningOrder,
   type Field,
   type Recipient,
   RecipientRole,
+  type TemplateDirectLink,
 } from '@documenso/prisma/client';
 import { AnimateGenericFadeInOut } from '@documenso/ui/components/animate/animate-generic-fade-in-out';
 import { RecipientActionAuthSelect } from '@documenso/ui/components/recipient/recipient-action-auth-select';

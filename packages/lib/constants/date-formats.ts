@@ -2,13 +2,14 @@ import { DateTime } from 'luxon';
 
 import { DEFAULT_DOCUMENT_TIME_ZONE } from './time-zones';
 
-export const DEFAULT_DOCUMENT_DATE_FORMAT = 'yyyy-MM-dd hh:mm a';
+export const DEFAULT_DOCUMENT_DATE_FORMAT = 'dd/MM/yyyy hh:mm a';
+// export const DEFAULT_DOCUMENT_DATE_FORMAT = 'yyyy-MM-dd hh:mm a';
 
 export const DATE_FORMATS = [
   {
     key: 'yyyy-MM-dd_hh:mm_a',
     label: 'YYYY-MM-DD HH:mm a',
-    value: DEFAULT_DOCUMENT_DATE_FORMAT,
+    value: 'yyyy-MM-dd hh:mm a',
   },
   {
     key: 'YYYYMMDD',
@@ -18,7 +19,7 @@ export const DATE_FORMATS = [
   {
     key: 'DDMMYYYY',
     label: 'DD/MM/YYYY',
-    value: 'dd/MM/yyyy hh:mm a',
+    value: DEFAULT_DOCUMENT_DATE_FORMAT,
   },
   {
     key: 'MMDDYYYY',

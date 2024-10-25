@@ -375,7 +375,7 @@ export const SignUpFormV2 = ({
                   )}
                 />
 
-                {(isGoogleSSOEnabled || isOIDCSSOEnabled) && (
+                {(!isGoogleSSOEnabled || isOIDCSSOEnabled) && (
                   <>
                     <div className="relative flex items-center justify-center gap-x-4 py-2 text-xs uppercase">
                       <div className="bg-border h-px flex-1" />
@@ -387,7 +387,7 @@ export const SignUpFormV2 = ({
                   </>
                 )}
 
-                {isGoogleSSOEnabled && (
+                {!isGoogleSSOEnabled && (
                   <>
                     <Button
                       type="button"
@@ -404,22 +404,20 @@ export const SignUpFormV2 = ({
                 )}
 
                 {isOIDCSSOEnabled && (
-                  <>
-                    <Button
-                      type="button"
-                      size="lg"
-                      variant={'outline'}
-                      className="bg-background text-muted-foreground border"
-                      disabled={isSubmitting}
-                      onClick={onSignUpWithOIDCClick}
-                    >
-                      <FaIdCardClip className="mr-2 h-5 w-5" />
-                      <Trans>Sign Up with OIDC</Trans>
-                    </Button>
-                  </>
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant={'outline'}
+                    className="bg-background text-muted-foreground border"
+                    disabled={isSubmitting}
+                    onClick={onSignUpWithOIDCClick}
+                  >
+                    <FaIdCardClip className="mr-2 h-5 w-5" />
+                    <Trans>Sign Up with OIDC</Trans>
+                  </Button>
                 )}
 
-                <p className="text-muted-foreground mt-4 text-sm">
+                <p className="text-muted-foreground mb-4 text-sm">
                   <Trans>
                     Already have an account?{' '}
                     <Link

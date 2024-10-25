@@ -2,11 +2,11 @@ import type { DocsThemeConfig } from 'nextra-theme-docs';
 import { useConfig } from 'nextra-theme-docs';
 
 const themeConfig: DocsThemeConfig = {
-  logo: <span>Documenso</span>,
+  logo: <span>AssinaAi</span>,
   head: function useHead() {
     const config = useConfig<{ title?: string; description?: string }>();
 
-    const title = `${config.frontMatter.title} | Documenso Docs` || 'Documenso Docs';
+    const title = `${config.frontMatter.title} | AssinaAi Docs` || 'AssinaAi Docs';
     const description = config.frontMatter.description || 'The official Documenso documentation';
 
     return (
@@ -33,8 +33,8 @@ const themeConfig: DocsThemeConfig = {
     text: (
       <span>
         {new Date().getFullYear()} ©{' '}
-        <a href="https://documen.so" target="_blank">
-          Documenso
+        <a href="https://bakongostudio.com.br" target="_blank">
+          A Bakongo Studio Company
         </a>
         .
       </span>
@@ -44,7 +44,7 @@ const themeConfig: DocsThemeConfig = {
   primarySaturation: 48.47,
   useNextSeoProps() {
     return {
-      titleTemplate: '%s | Documenso Docs',
+      titleTemplate: '%s | AssinaAi Docs',
     };
   },
 };

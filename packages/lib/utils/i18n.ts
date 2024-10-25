@@ -87,7 +87,7 @@ export const extractLocaleData = ({
 
   // Override web app to be English.
   if (!IS_APP_WEB_I18N_ENABLED && IS_APP_WEB) {
-    lang = 'en';
+    lang = 'pt';
   }
 
   // Filter out locales that are not valid.
@@ -101,7 +101,7 @@ export const extractLocaleData = ({
   });
 
   return {
-    lang: lang || APP_I18N_OPTIONS.sourceLang,
+    lang: lang ?? APP_I18N_OPTIONS.sourceLang,
     locales,
   };
 };
