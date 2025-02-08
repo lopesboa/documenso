@@ -1,7 +1,10 @@
 ###########################
 #     BASE CONTAINER      #
 ###########################
-FROM node:18-alpine AS base
+FROM node:22-alpine3.20 AS base
+
+RUN apk add --no-cache openssl
+
 
 ###########################
 #    BUILDER CONTAINER    #
@@ -30,7 +33,7 @@ FROM base AS installer
 RUN apk add --no-cache libc6-compat
 RUN apk add --no-cache jq
 # Required for node_modules/aws-crt
-RUN apk add --no-cache make cmake g++
+RUN apk add --no-cache make cmake g++ openssl
 
 WORKDIR /app
 
@@ -57,6 +60,8 @@ ENV NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY="$NEXT_PRIVATE_ENCRYPTION_SECONDARY_KE
 COPY .gitignore .gitignore
 COPY --from=builder /app/out/json/ .
 COPY --from=builder /app/out/package-lock.json ./package-lock.json
+
+COPY --from=builder /app/lingui.config.ts ./lingui.config.ts
 
 RUN npm ci
 

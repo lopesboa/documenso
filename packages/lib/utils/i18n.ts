@@ -1,15 +1,15 @@
 import type { ReadonlyRequestCookies } from 'next/dist/server/web/spec-extension/adapters/request-cookies';
 
-import type { I18n } from '@lingui/core';
+import type { I18n, MessageDescriptor } from '@lingui/core';
 
 import { IS_APP_WEB, IS_APP_WEB_I18N_ENABLED } from '../constants/app';
 import type { I18nLocaleData, SupportedLanguageCodes } from '../constants/i18n';
 import { APP_I18N_OPTIONS } from '../constants/i18n';
 
 export async function dynamicActivate(i18nInstance: I18n, locale: string) {
-  const { messages } = await import(
-    `../translations/${locale}/${IS_APP_WEB ? 'web' : 'marketing'}.js`
-  );
+  const extension = process.env.NODE_ENV === 'development' ? 'po' : 'js';
+
+  const { messages } = await import(`../translations/${locale}/web.${extension}`);
 
   i18nInstance.loadAndActivate({ locale, messages });
 }
@@ -104,4 +104,8 @@ export const extractLocaleData = ({
     lang: lang || APP_I18N_OPTIONS.sourceLang,
     locales,
   };
+};
+
+export const parseMessageDescriptor = (_: I18n['_'], value: string | MessageDescriptor) => {
+  return typeof value === 'string' ? value : _(value);
 };

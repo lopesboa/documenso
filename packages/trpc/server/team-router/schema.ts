@@ -1,16 +1,11 @@
 import { z } from 'zod';
 
+import { SUPPORTED_LANGUAGE_CODES } from '@documenso/lib/constants/i18n';
 import { PROTECTED_TEAM_URLS } from '@documenso/lib/constants/teams';
-import { TeamMemberRole } from '@documenso/prisma/client';
+import { ZFindSearchParamsSchema } from '@documenso/lib/types/search-params';
+import { DocumentVisibility, TeamMemberRole } from '@documenso/prisma/client';
 
 import { ZUpdatePublicProfileMutationSchema } from '../profile-router/schema';
-
-// Consider refactoring to use ZBaseTableSearchParamsSchema.
-const GenericFindQuerySchema = z.object({
-  term: z.string().optional(),
-  page: z.number().min(1).optional(),
-  perPage: z.number().min(1).optional(),
-});
 
 /**
  * Restrict team URLs schema.
@@ -121,17 +116,17 @@ export const ZFindTeamInvoicesQuerySchema = z.object({
   teamId: z.number(),
 });
 
-export const ZFindTeamMemberInvitesQuerySchema = GenericFindQuerySchema.extend({
+export const ZFindTeamMemberInvitesQuerySchema = ZFindSearchParamsSchema.extend({
   teamId: z.number(),
 });
 
-export const ZFindTeamMembersQuerySchema = GenericFindQuerySchema.extend({
+export const ZFindTeamMembersQuerySchema = ZFindSearchParamsSchema.extend({
   teamId: z.number(),
 });
 
-export const ZFindTeamsQuerySchema = GenericFindQuerySchema;
+export const ZFindTeamsQuerySchema = ZFindSearchParamsSchema;
 
-export const ZFindTeamsPendingQuerySchema = GenericFindQuerySchema;
+export const ZFindTeamsPendingQuerySchema = ZFindSearchParamsSchema;
 
 export const ZGetTeamQuerySchema = z.object({
   teamId: z.number(),
@@ -190,6 +185,30 @@ export const ZResendTeamMemberInvitationMutationSchema = z.object({
   invitationId: z.number(),
 });
 
+export const ZUpdateTeamBrandingSettingsMutationSchema = z.object({
+  teamId: z.number(),
+  settings: z.object({
+    brandingEnabled: z.boolean().optional().default(false),
+    brandingLogo: z.string().optional().default(''),
+    brandingUrl: z.string().optional().default(''),
+    brandingCompanyDetails: z.string().optional().default(''),
+  }),
+});
+
+export const ZUpdateTeamDocumentSettingsMutationSchema = z.object({
+  teamId: z.number(),
+  settings: z.object({
+    documentVisibility: z
+      .nativeEnum(DocumentVisibility)
+      .optional()
+      .default(DocumentVisibility.EVERYONE),
+    documentLanguage: z.enum(SUPPORTED_LANGUAGE_CODES).optional().default('en'),
+    includeSenderDetails: z.boolean().optional().default(false),
+    typedSignatureEnabled: z.boolean().optional().default(true),
+    includeSigningCertificate: z.boolean().optional().default(true),
+  }),
+});
+
 export type TCreateTeamMutationSchema = z.infer<typeof ZCreateTeamMutationSchema>;
 export type TCreateTeamEmailVerificationMutationSchema = z.infer<
   typeof ZCreateTeamEmailVerificationMutationSchema
@@ -224,4 +243,10 @@ export type TResendTeamEmailVerificationMutationSchema = z.infer<
 >;
 export type TResendTeamMemberInvitationMutationSchema = z.infer<
   typeof ZResendTeamMemberInvitationMutationSchema
+>;
+export type TUpdateTeamBrandingSettingsMutationSchema = z.infer<
+  typeof ZUpdateTeamBrandingSettingsMutationSchema
+>;
+export type TUpdateTeamDocumentSettingsMutationSchema = z.infer<
+  typeof ZUpdateTeamDocumentSettingsMutationSchema
 >;

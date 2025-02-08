@@ -1,15 +1,17 @@
 import { createElement } from 'react';
 
+import { msg } from '@lingui/macro';
 import { DateTime } from 'luxon';
 import { match } from 'ts-pattern';
+import { z } from 'zod';
 
 import { mailer } from '@documenso/email/mailer';
-import { render } from '@documenso/email/render';
 import { DocumentCreatedFromDirectTemplateEmailTemplate } from '@documenso/email/templates/document-created-from-direct-template';
 import { nanoid } from '@documenso/lib/universal/id';
 import { prisma } from '@documenso/prisma';
 import type { Field, Signature } from '@documenso/prisma/client';
 import {
+  DocumentSigningOrder,
   DocumentSource,
   DocumentStatus,
   FieldType,
@@ -17,9 +19,11 @@ import {
   RecipientRole,
   SendStatus,
   SigningStatus,
+  WebhookTriggerEvents,
 } from '@documenso/prisma/client';
 import type { TSignFieldWithTokenMutationSchema } from '@documenso/trpc/server/field-router/schema';
 
+import { getI18nInstance } from '../../client-only/providers/i18n.server';
 import { NEXT_PUBLIC_WEBAPP_URL } from '../../constants/app';
 import { DEFAULT_DOCUMENT_DATE_FORMAT } from '../../constants/date-formats';
 import { DEFAULT_DOCUMENT_TIME_ZONE } from '../../constants/time-zones';
@@ -28,7 +32,11 @@ import { DOCUMENT_AUDIT_LOG_TYPE } from '../../types/document-audit-logs';
 import type { TRecipientActionAuthTypes } from '../../types/document-auth';
 import { DocumentAccessAuth, ZRecipientAuthOptionsSchema } from '../../types/document-auth';
 import { ZFieldMetaSchema } from '../../types/field-meta';
-import type { RequestMetadata } from '../../universal/extract-request-metadata';
+import {
+  ZWebhookDocumentSchema,
+  mapDocumentToWebhookDocumentPayload,
+} from '../../types/webhook-payload';
+import type { ApiRequestMetadata } from '../../universal/extract-request-metadata';
 import type { CreateDocumentAuditLogDataResponse } from '../../utils/document-audit-logs';
 import { createDocumentAuditLogData } from '../../utils/document-audit-logs';
 import {
@@ -36,9 +44,12 @@ import {
   createRecipientAuthOptions,
   extractDocumentAuthMethods,
 } from '../../utils/document-auth';
+import { renderEmailWithI18N } from '../../utils/render-email-with-i18n';
+import { teamGlobalSettingsToBranding } from '../../utils/team-global-settings-to-branding';
 import { formatDocumentsPath } from '../../utils/teams';
 import { sendDocument } from '../document/send-document';
 import { validateFieldAuth } from '../document/validate-field-auth';
+import { triggerWebhook } from '../webhooks/trigger/trigger-webhook';
 
 export type CreateDocumentFromDirectTemplateOptions = {
   directRecipientName?: string;
@@ -47,7 +58,7 @@ export type CreateDocumentFromDirectTemplateOptions = {
   directTemplateExternalId?: string;
   signedFieldValues: TSignFieldWithTokenMutationSchema[];
   templateUpdatedAt: Date;
-  requestMetadata: RequestMetadata;
+  requestMetadata: ApiRequestMetadata;
   user?: {
     id: number;
     name?: string;
@@ -56,9 +67,19 @@ export type CreateDocumentFromDirectTemplateOptions = {
 };
 
 type CreatedDirectRecipientField = {
-  field: Field & { Signature?: Signature | null };
+  field: Field & { signature?: Signature | null };
   derivedRecipientActionAuth: TRecipientActionAuthTypes | null;
 };
+
+export const ZCreateDocumentFromDirectTemplateResponseSchema = z.object({
+  token: z.string(),
+  documentId: z.number(),
+  recipientId: z.number(),
+});
+
+export type TCreateDocumentFromDirectTemplateResponse = z.infer<
+  typeof ZCreateDocumentFromDirectTemplateResponseSchema
+>;
 
 export const createDocumentFromDirectTemplate = async ({
   directRecipientName: initialDirectRecipientName,
@@ -69,7 +90,7 @@ export const createDocumentFromDirectTemplate = async ({
   templateUpdatedAt,
   requestMetadata,
   user,
-}: CreateDocumentFromDirectTemplateOptions) => {
+}: CreateDocumentFromDirectTemplateOptions): Promise<TCreateDocumentFromDirectTemplateResponse> => {
   const template = await prisma.template.findFirst({
     where: {
       directLink: {
@@ -77,38 +98,47 @@ export const createDocumentFromDirectTemplate = async ({
       },
     },
     include: {
-      Recipient: {
+      recipients: {
         include: {
-          Field: true,
+          fields: true,
         },
       },
       directLink: true,
       templateDocumentData: true,
       templateMeta: true,
-      User: true,
+      user: true,
+      team: {
+        include: {
+          teamGlobalSettings: true,
+        },
+      },
     },
   });
 
   if (!template?.directLink?.enabled) {
-    throw new AppError(AppErrorCode.INVALID_REQUEST, 'Invalid or missing template');
+    throw new AppError(AppErrorCode.INVALID_REQUEST, { message: 'Invalid or missing template' });
   }
 
-  const { Recipient: recipients, directLink, User: templateOwner } = template;
+  const { recipients, directLink, user: templateOwner } = template;
 
   const directTemplateRecipient = recipients.find(
     (recipient) => recipient.id === directLink.directTemplateRecipientId,
   );
 
   if (!directTemplateRecipient || directTemplateRecipient.role === RecipientRole.CC) {
-    throw new AppError(AppErrorCode.INVALID_REQUEST, 'Invalid or missing direct recipient');
+    throw new AppError(AppErrorCode.INVALID_REQUEST, {
+      message: 'Invalid or missing direct recipient',
+    });
   }
 
   if (template.updatedAt.getTime() !== templateUpdatedAt.getTime()) {
-    throw new AppError(AppErrorCode.INVALID_REQUEST, 'Template no longer matches');
+    throw new AppError(AppErrorCode.INVALID_REQUEST, { message: 'Template no longer matches' });
   }
 
   if (user && user.email !== directRecipientEmail) {
-    throw new AppError(AppErrorCode.INVALID_REQUEST, 'Email must match if you are logged in');
+    throw new AppError(AppErrorCode.INVALID_REQUEST, {
+      message: 'Email must match if you are logged in',
+    });
   }
 
   const { derivedRecipientAccessAuth, documentAuthOption: templateAuthOptions } =
@@ -125,14 +155,14 @@ export const createDocumentFromDirectTemplate = async ({
     .exhaustive();
 
   if (!isAccessAuthValid) {
-    throw new AppError(AppErrorCode.UNAUTHORIZED, 'You must be logged in');
+    throw new AppError(AppErrorCode.UNAUTHORIZED, { message: 'You must be logged in' });
   }
 
   const directTemplateRecipientAuthOptions = ZRecipientAuthOptionsSchema.parse(
     directTemplateRecipient.authOptions,
   );
 
-  const nonDirectTemplateRecipients = template.Recipient.filter(
+  const nonDirectTemplateRecipients = template.recipients.filter(
     (recipient) => recipient.id !== directTemplateRecipient.id,
   );
 
@@ -140,16 +170,21 @@ export const createDocumentFromDirectTemplate = async ({
   const metaDateFormat = template.templateMeta?.dateFormat || DEFAULT_DOCUMENT_DATE_FORMAT;
   const metaEmailMessage = template.templateMeta?.message || '';
   const metaEmailSubject = template.templateMeta?.subject || '';
+  const metaLanguage =
+    template.templateMeta?.language ?? template.team?.teamGlobalSettings?.documentLanguage;
+  const metaSigningOrder = template.templateMeta?.signingOrder || DocumentSigningOrder.PARALLEL;
 
   // Associate, validate and map to a query every direct template recipient field with the provided fields.
   const createDirectRecipientFieldArgs = await Promise.all(
-    directTemplateRecipient.Field.map(async (templateField) => {
+    directTemplateRecipient.fields.map(async (templateField) => {
       const signedFieldValue = signedFieldValues.find(
         (value) => value.fieldId === templateField.id,
       );
 
       if (!signedFieldValue) {
-        throw new AppError(AppErrorCode.INVALID_BODY, 'Invalid, missing or changed fields');
+        throw new AppError(AppErrorCode.INVALID_BODY, {
+          message: 'Invalid, missing or changed fields',
+        });
       }
 
       if (templateField.type === FieldType.NAME && directRecipientName === undefined) {
@@ -230,12 +265,13 @@ export const createDocumentFromDirectTemplate = async ({
         createdAt: initialRequestTime,
         status: DocumentStatus.PENDING,
         externalId: directTemplateExternalId,
+        visibility: template.team?.teamGlobalSettings?.documentVisibility,
         documentDataId: documentData.id,
         authOptions: createDocumentAuthOptions({
           globalAccessAuth: templateAuthOptions.globalAccessAuth,
           globalActionAuth: templateAuthOptions.globalActionAuth,
         }),
-        Recipient: {
+        recipients: {
           createMany: {
             data: nonDirectTemplateRecipients.map((recipient) => {
               const authOptions = ZRecipientAuthOptionsSchema.parse(recipient?.authOptions);
@@ -254,6 +290,7 @@ export const createDocumentFromDirectTemplate = async ({
                   recipient.role === RecipientRole.CC
                     ? SigningStatus.SIGNED
                     : SigningStatus.NOT_SIGNED,
+                signingOrder: recipient.signingOrder,
                 token: nanoid(),
               };
             }),
@@ -265,11 +302,14 @@ export const createDocumentFromDirectTemplate = async ({
             dateFormat: metaDateFormat,
             message: metaEmailMessage,
             subject: metaEmailSubject,
+            language: metaLanguage,
+            signingOrder: metaSigningOrder,
+            distributionMethod: template.templateMeta?.distributionMethod,
           },
         },
       },
       include: {
-        Recipient: true,
+        recipients: true,
         team: {
           select: {
             url: true,
@@ -281,7 +321,7 @@ export const createDocumentFromDirectTemplate = async ({
     let nonDirectRecipientFieldsToCreate: Omit<Field, 'id' | 'secondaryId' | 'templateId'>[] = [];
 
     Object.values(nonDirectTemplateRecipients).forEach((templateRecipient) => {
-      const recipient = document.Recipient.find(
+      const recipient = document.recipients.find(
         (recipient) => recipient.email === templateRecipient.email,
       );
 
@@ -290,7 +330,7 @@ export const createDocumentFromDirectTemplate = async ({
       }
 
       nonDirectRecipientFieldsToCreate = nonDirectRecipientFieldsToCreate.concat(
-        templateRecipient.Field.map((field) => ({
+        templateRecipient.fields.map((field) => ({
           documentId: document.id,
           recipientId: recipient.id,
           type: field.type,
@@ -328,7 +368,8 @@ export const createDocumentFromDirectTemplate = async ({
         signingStatus: SigningStatus.SIGNED,
         sendStatus: SendStatus.SENT,
         signedAt: initialRequestTime,
-        Field: {
+        signingOrder: directTemplateRecipient.signingOrder,
+        fields: {
           createMany: {
             data: directTemplateNonSignatureFields.map(({ templateField, customText }) => ({
               documentId: document.id,
@@ -346,7 +387,7 @@ export const createDocumentFromDirectTemplate = async ({
         },
       },
       include: {
-        Field: true,
+        fields: true,
       },
     });
 
@@ -372,7 +413,7 @@ export const createDocumentFromDirectTemplate = async ({
               customText: '',
               inserted: true,
               fieldMeta: templateField.fieldMeta || Prisma.JsonNull,
-              Signature: {
+              signature: {
                 create: {
                   recipientId: createdDirectRecipient.id,
                   signatureImageAsBase64: signature.signatureImageAsBase64,
@@ -381,7 +422,7 @@ export const createDocumentFromDirectTemplate = async ({
               },
             },
             include: {
-              Signature: true,
+              signature: true,
             },
           });
 
@@ -394,7 +435,7 @@ export const createDocumentFromDirectTemplate = async ({
     );
 
     const createdDirectRecipientFields: CreatedDirectRecipientField[] = [
-      ...createdDirectRecipient.Field.map((field) => ({
+      ...createdDirectRecipient.fields.map((field) => ({
         field,
         derivedRecipientActionAuth: null,
       })),
@@ -416,7 +457,7 @@ export const createDocumentFromDirectTemplate = async ({
           name: user?.name,
           email: directRecipientEmail,
         },
-        requestMetadata,
+        metadata: requestMetadata,
         data: {
           title: document.title,
           source: {
@@ -434,7 +475,7 @@ export const createDocumentFromDirectTemplate = async ({
           name: user?.name,
           email: directRecipientEmail,
         },
-        requestMetadata,
+        metadata: requestMetadata,
         data: {
           recipientEmail: createdDirectRecipient.email,
           recipientId: createdDirectRecipient.id,
@@ -452,7 +493,7 @@ export const createDocumentFromDirectTemplate = async ({
             name: user?.name,
             email: directRecipientEmail,
           },
-          requestMetadata,
+          metadata: requestMetadata,
           data: {
             recipientEmail: createdDirectRecipient.email,
             recipientId: createdDirectRecipient.id,
@@ -463,7 +504,7 @@ export const createDocumentFromDirectTemplate = async ({
               .with(FieldType.SIGNATURE, FieldType.FREE_SIGNATURE, (type) => ({
                 type,
                 data:
-                  field.Signature?.signatureImageAsBase64 || field.Signature?.typedSignature || '',
+                  field.signature?.signatureImageAsBase64 || field.signature?.typedSignature || '',
               }))
               .with(
                 FieldType.DATE,
@@ -497,7 +538,7 @@ export const createDocumentFromDirectTemplate = async ({
           name: user?.name,
           email: directRecipientEmail,
         },
-        requestMetadata,
+        metadata: requestMetadata,
         data: {
           recipientEmail: createdDirectRecipient.email,
           recipientId: createdDirectRecipient.id,
@@ -522,6 +563,17 @@ export const createDocumentFromDirectTemplate = async ({
       assetBaseUrl: NEXT_PUBLIC_WEBAPP_URL() || 'http://localhost:3000',
     });
 
+    const branding = template.team?.teamGlobalSettings
+      ? teamGlobalSettingsToBranding(template.team.teamGlobalSettings)
+      : undefined;
+
+    const [html, text] = await Promise.all([
+      renderEmailWithI18N(emailTemplate, { lang: metaLanguage, branding }),
+      renderEmailWithI18N(emailTemplate, { lang: metaLanguage, branding, plainText: true }),
+    ]);
+
+    const i18n = await getI18nInstance(metaLanguage);
+
     await mailer.sendMail({
       to: [
         {
@@ -533,9 +585,9 @@ export const createDocumentFromDirectTemplate = async ({
         name: process.env.NEXT_PRIVATE_SMTP_FROM_NAME || 'Documenso',
         address: process.env.NEXT_PRIVATE_SMTP_FROM_ADDRESS || 'noreply@documenso.com',
       },
-      subject: 'Document created from direct template',
-      html: render(emailTemplate),
-      text: render(emailTemplate, { plainText: true }),
+      subject: i18n._(msg`Document created from direct template`),
+      html,
+      text,
     });
 
     return {
@@ -552,6 +604,24 @@ export const createDocumentFromDirectTemplate = async ({
       userId: template.userId,
       teamId: template.teamId || undefined,
       requestMetadata,
+    });
+
+    const createdDocument = await prisma.document.findFirstOrThrow({
+      where: {
+        id: documentId,
+      },
+      include: {
+        documentData: true,
+        documentMeta: true,
+        recipients: true,
+      },
+    });
+
+    await triggerWebhook({
+      event: WebhookTriggerEvents.DOCUMENT_SIGNED,
+      data: ZWebhookDocumentSchema.parse(mapDocumentToWebhookDocumentPayload(createdDocument)),
+      userId: template.userId,
+      teamId: template.teamId ?? undefined,
     });
   } catch (err) {
     console.error('[CREATE_DOCUMENT_FROM_DIRECT_TEMPLATE]:', err);

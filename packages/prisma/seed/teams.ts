@@ -1,6 +1,7 @@
 import { customAlphabet } from 'nanoid';
 
 import { prisma } from '..';
+import type { Prisma } from '../client';
 import { TeamMemberInviteStatus, TeamMemberRole } from '../client';
 import { seedUser } from './users';
 
@@ -10,11 +11,13 @@ const nanoid = customAlphabet('1234567890abcdef', 10);
 type SeedTeamOptions = {
   createTeamMembers?: number;
   createTeamEmail?: true | string;
+  createTeamOptions?: Partial<Prisma.TeamUncheckedCreateInput>;
 };
 
 export const seedTeam = async ({
   createTeamMembers = 0,
   createTeamEmail,
+  createTeamOptions = {},
 }: SeedTeamOptions = {}) => {
   const teamUrl = `team-${nanoid()}`;
   const teamEmail = createTeamEmail === true ? `${teamUrl}@${EMAIL_DOMAIN}` : createTeamEmail;
@@ -42,7 +45,7 @@ export const seedTeam = async ({
         createMany: {
           data: [teamOwner, ...teamMembers].map((user) => ({
             userId: user.id,
-            role: TeamMemberRole.ADMIN,
+            role: user === teamOwner ? TeamMemberRole.ADMIN : TeamMemberRole.MEMBER,
           })),
         },
       },
@@ -54,6 +57,7 @@ export const seedTeam = async ({
             },
           }
         : undefined,
+      ...createTeamOptions,
     },
   });
 
@@ -69,6 +73,7 @@ export const seedTeam = async ({
         },
       },
       teamEmail: true,
+      teamGlobalSettings: true,
     },
   });
 };
@@ -105,13 +110,15 @@ export const unseedTeam = async (teamUrl: string) => {
 type SeedTeamMemberOptions = {
   teamId: number;
   role?: TeamMemberRole;
+  name?: string;
 };
 
 export const seedTeamMember = async ({
   teamId,
+  name,
   role = TeamMemberRole.ADMIN,
 }: SeedTeamMemberOptions) => {
-  const user = await seedUser();
+  const user = await seedUser({ name });
 
   await prisma.teamMember.create({
     data: {

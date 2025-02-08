@@ -2,9 +2,6 @@
 
 import { forwardRef, useEffect, useState } from 'react';
 
-import { useParams } from 'next/navigation';
-import { usePathname } from 'next/navigation';
-
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/macro';
 import { useLingui } from '@lingui/react';
@@ -13,15 +10,18 @@ import { match } from 'ts-pattern';
 import {
   type TBaseFieldMeta as BaseFieldMeta,
   type TCheckboxFieldMeta as CheckboxFieldMeta,
+  type TDateFieldMeta as DateFieldMeta,
   type TDropdownFieldMeta as DropdownFieldMeta,
+  type TEmailFieldMeta as EmailFieldMeta,
   type TFieldMetaSchema as FieldMeta,
+  type TInitialsFieldMeta as InitialsFieldMeta,
+  type TNameFieldMeta as NameFieldMeta,
   type TNumberFieldMeta as NumberFieldMeta,
   type TRadioFieldMeta as RadioFieldMeta,
   type TTextFieldMeta as TextFieldMeta,
   ZFieldMetaSchema,
 } from '@documenso/lib/types/field-meta';
 import { FieldType } from '@documenso/prisma/client';
-import { trpc } from '@documenso/trpc/react';
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
 import type { FieldFormType } from './add-fields';
@@ -33,7 +33,11 @@ import {
 } from './document-flow-root';
 import { FieldItem } from './field-item';
 import { CheckboxFieldAdvancedSettings } from './field-items-advanced-settings/checkbox-field';
+import { DateFieldAdvancedSettings } from './field-items-advanced-settings/date-field';
 import { DropdownFieldAdvancedSettings } from './field-items-advanced-settings/dropdown-field';
+import { EmailFieldAdvancedSettings } from './field-items-advanced-settings/email-field';
+import { InitialsFieldAdvancedSettings } from './field-items-advanced-settings/initials-field';
+import { NameFieldAdvancedSettings } from './field-items-advanced-settings/name-field';
 import { NumberFieldAdvancedSettings } from './field-items-advanced-settings/number-field';
 import { RadioFieldAdvancedSettings } from './field-items-advanced-settings/radio-field';
 import { TextFieldAdvancedSettings } from './field-items-advanced-settings/text-field';
@@ -55,10 +59,38 @@ export type FieldMetaKeys =
   | keyof NumberFieldMeta
   | keyof RadioFieldMeta
   | keyof CheckboxFieldMeta
-  | keyof DropdownFieldMeta;
+  | keyof DropdownFieldMeta
+  | keyof InitialsFieldMeta
+  | keyof NameFieldMeta
+  | keyof EmailFieldMeta
+  | keyof DateFieldMeta;
 
 const getDefaultState = (fieldType: FieldType): FieldMeta => {
   switch (fieldType) {
+    case FieldType.INITIALS:
+      return {
+        type: 'initials',
+        fontSize: 14,
+        textAlign: 'left',
+      };
+    case FieldType.NAME:
+      return {
+        type: 'name',
+        fontSize: 14,
+        textAlign: 'left',
+      };
+    case FieldType.EMAIL:
+      return {
+        type: 'email',
+        fontSize: 14,
+        textAlign: 'left',
+      };
+    case FieldType.DATE:
+      return {
+        type: 'date',
+        fontSize: 14,
+        textAlign: 'left',
+      };
     case FieldType.TEXT:
       return {
         type: 'text',
@@ -66,8 +98,10 @@ const getDefaultState = (fieldType: FieldType): FieldMeta => {
         placeholder: '',
         text: '',
         characterLimit: 0,
+        fontSize: 14,
         required: false,
         readOnly: false,
+        textAlign: 'left',
       };
     case FieldType.NUMBER:
       return {
@@ -80,6 +114,8 @@ const getDefaultState = (fieldType: FieldType): FieldMeta => {
         maxValue: 0,
         required: false,
         readOnly: false,
+        fontSize: 14,
+        textAlign: 'left',
       };
     case FieldType.RADIO:
       return {
@@ -112,48 +148,13 @@ const getDefaultState = (fieldType: FieldType): FieldMeta => {
 
 export const FieldAdvancedSettings = forwardRef<HTMLDivElement, FieldAdvancedSettingsProps>(
   (
-    {
-      title,
-      description,
-      field,
-      fields,
-      onAdvancedSettings,
-      isDocumentPdfLoaded = true,
-      onSave,
-      teamId,
-    },
+    { title, description, field, fields, onAdvancedSettings, isDocumentPdfLoaded = true, onSave },
     ref,
   ) => {
     const { _ } = useLingui();
     const { toast } = useToast();
 
-    const params = useParams();
-    const pathname = usePathname();
-    const id = params?.id;
-    const isTemplatePage = pathname?.includes('template');
-    const isDocumentPage = pathname?.includes('document');
     const [errors, setErrors] = useState<string[]>([]);
-
-    const { data: template } = trpc.template.getTemplateWithDetailsById.useQuery(
-      {
-        id: Number(id),
-      },
-      {
-        enabled: isTemplatePage,
-      },
-    );
-
-    const { data: document } = trpc.document.getDocumentById.useQuery(
-      {
-        id: Number(id),
-        teamId,
-      },
-      {
-        enabled: isDocumentPage,
-      },
-    );
-
-    const doesFieldExist = (!!document || !!template) && field.nativeId !== undefined;
 
     const fieldMeta = field?.fieldMeta;
 
@@ -180,10 +181,17 @@ export const FieldAdvancedSettings = forwardRef<HTMLDivElement, FieldAdvancedSet
 
     const handleFieldChange = (
       key: FieldMetaKeys,
-      value: string | { checked: boolean; value: string }[] | { value: string }[] | boolean,
+      value:
+        | string
+        | { checked: boolean; value: string }[]
+        | { value: string }[]
+        | boolean
+        | number,
     ) => {
       setFieldState((prevState: FieldMeta) => {
-        if (['characterLimit', 'minValue', 'maxValue', 'validationLength'].includes(key)) {
+        if (
+          ['characterLimit', 'minValue', 'maxValue', 'validationLength', 'fontSize'].includes(key)
+        ) {
           const parsedValue = Number(value);
 
           return {
@@ -232,6 +240,35 @@ export const FieldAdvancedSettings = forwardRef<HTMLDivElement, FieldAdvancedSet
             ))}
 
           {match(field.type)
+            .with(FieldType.INITIALS, () => (
+              <InitialsFieldAdvancedSettings
+                fieldState={fieldState}
+                handleFieldChange={handleFieldChange}
+                handleErrors={setErrors}
+              />
+            ))
+            .with(FieldType.NAME, () => (
+              <NameFieldAdvancedSettings
+                fieldState={fieldState}
+                handleFieldChange={handleFieldChange}
+                handleErrors={setErrors}
+              />
+            ))
+            .with(FieldType.EMAIL, () => (
+              <EmailFieldAdvancedSettings
+                fieldState={fieldState}
+                handleFieldChange={handleFieldChange}
+                handleErrors={setErrors}
+              />
+            ))
+            .with(FieldType.DATE, () => (
+              <DateFieldAdvancedSettings
+                fieldState={fieldState}
+                handleFieldChange={handleFieldChange}
+                handleErrors={setErrors}
+              />
+            ))
+
             .with(FieldType.TEXT, () => (
               <TextFieldAdvancedSettings
                 fieldState={fieldState}
@@ -268,7 +305,6 @@ export const FieldAdvancedSettings = forwardRef<HTMLDivElement, FieldAdvancedSet
               />
             ))
             .otherwise(() => null)}
-
           {errors.length > 0 && (
             <div className="mt-4">
               <ul>

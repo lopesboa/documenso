@@ -31,7 +31,7 @@ type NewTemplateDialogProps = {
   templateRootPath: string;
 };
 
-export const NewTemplateDialog = ({ teamId, templateRootPath }: NewTemplateDialogProps) => {
+export const NewTemplateDialog = ({ templateRootPath }: NewTemplateDialogProps) => {
   const router = useRouter();
 
   const { data: session } = useSession();
@@ -58,7 +58,6 @@ export const NewTemplateDialog = ({ teamId, templateRootPath }: NewTemplateDialo
       });
 
       const { id } = await createTemplate({
-        teamId,
         title: file.name,
         templateDocumentDataId,
       });
@@ -73,7 +72,7 @@ export const NewTemplateDialog = ({ teamId, templateRootPath }: NewTemplateDialo
 
       setShowNewTemplateDialog(false);
 
-      router.push(`${templateRootPath}/${id}`);
+      router.push(`${templateRootPath}/${id}/edit`);
     } catch {
       toast({
         title: _(msg`Something went wrong`),

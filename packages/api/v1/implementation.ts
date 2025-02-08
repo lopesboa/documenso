@@ -15,27 +15,29 @@ import { findDocuments } from '@documenso/lib/server-only/document/find-document
 import { getDocumentById } from '@documenso/lib/server-only/document/get-document-by-id';
 import { resendDocument } from '@documenso/lib/server-only/document/resend-document';
 import { sendDocument } from '@documenso/lib/server-only/document/send-document';
-import { updateDocument } from '@documenso/lib/server-only/document/update-document';
-import { updateDocumentSettings } from '@documenso/lib/server-only/document/update-document-settings';
+import { updateDocument as updateDocumentSettings } from '@documenso/lib/server-only/document/update-document';
 import { deleteField } from '@documenso/lib/server-only/field/delete-field';
 import { getFieldById } from '@documenso/lib/server-only/field/get-field-by-id';
+import { getFieldsForDocument } from '@documenso/lib/server-only/field/get-fields-for-document';
 import { updateField } from '@documenso/lib/server-only/field/update-field';
 import { insertFormValuesInPdf } from '@documenso/lib/server-only/pdf/insert-form-values-in-pdf';
 import { deleteRecipient } from '@documenso/lib/server-only/recipient/delete-recipient';
-import { getRecipientById } from '@documenso/lib/server-only/recipient/get-recipient-by-id';
+import { getRecipientByIdV1Api } from '@documenso/lib/server-only/recipient/get-recipient-by-id-v1-api';
 import { getRecipientsForDocument } from '@documenso/lib/server-only/recipient/get-recipients-for-document';
-import { setRecipientsForDocument } from '@documenso/lib/server-only/recipient/set-recipients-for-document';
+import { setDocumentRecipients } from '@documenso/lib/server-only/recipient/set-document-recipients';
 import { updateRecipient } from '@documenso/lib/server-only/recipient/update-recipient';
-import type { CreateDocumentFromTemplateResponse } from '@documenso/lib/server-only/template/create-document-from-template';
+import { createTeamMemberInvites } from '@documenso/lib/server-only/team/create-team-member-invites';
+import { deleteTeamMembers } from '@documenso/lib/server-only/team/delete-team-members';
 import { createDocumentFromTemplate } from '@documenso/lib/server-only/template/create-document-from-template';
 import { createDocumentFromTemplateLegacy } from '@documenso/lib/server-only/template/create-document-from-template-legacy';
 import { deleteTemplate } from '@documenso/lib/server-only/template/delete-template';
 import { findTemplates } from '@documenso/lib/server-only/template/find-templates';
 import { getTemplateById } from '@documenso/lib/server-only/template/get-template-by-id';
-import { ZFieldMetaSchema } from '@documenso/lib/types/field-meta';
+import { extractDerivedDocumentEmailSettings } from '@documenso/lib/types/document-email';
 import {
   ZCheckboxFieldMeta,
   ZDropdownFieldMeta,
+  ZFieldMetaSchema,
   ZNumberFieldMeta,
   ZRadioFieldMeta,
   ZTextFieldMeta,
@@ -49,7 +51,13 @@ import {
 } from '@documenso/lib/universal/upload/server-actions';
 import { createDocumentAuditLogData } from '@documenso/lib/utils/document-audit-logs';
 import { prisma } from '@documenso/prisma';
-import { DocumentDataType, DocumentStatus, SigningStatus } from '@documenso/prisma/client';
+import type { Prisma } from '@documenso/prisma/client';
+import {
+  DocumentDataType,
+  DocumentStatus,
+  SigningStatus,
+  TeamMemberRole,
+} from '@documenso/prisma/client';
 
 import { ApiContractV1 } from './contract';
 import { authenticatedMiddleware } from './middleware/authenticated';
@@ -80,15 +88,40 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
 
     try {
       const document = await getDocumentById({
-        id: Number(documentId),
+        documentId: Number(documentId),
         userId: user.id,
         teamId: team?.id,
       });
 
       const recipients = await getRecipientsForDocument({
         documentId: Number(documentId),
-        teamId: team?.id,
         userId: user.id,
+        teamId: team?.id,
+      });
+
+      const fields = await getFieldsForDocument({
+        documentId: Number(documentId),
+        userId: user.id,
+        teamId: team?.id,
+      });
+
+      const parsedMetaFields = fields.map((field) => {
+        let parsedMetaOrNull = null;
+
+        if (field.fieldMeta) {
+          const result = ZFieldMetaSchema.safeParse(field.fieldMeta);
+
+          if (!result.success) {
+            throw new Error('Field meta parsing failed for field ' + field.id);
+          }
+
+          parsedMetaOrNull = result.data;
+        }
+
+        return {
+          ...field,
+          fieldMeta: parsedMetaOrNull,
+        };
       });
 
       return {
@@ -99,6 +132,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
             ...recipient,
             signingUrl: `${NEXT_PUBLIC_WEBAPP_URL()}/sign/${recipient.token}`,
           })),
+          fields: parsedMetaFields,
         },
       };
     } catch (err) {
@@ -125,7 +159,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       }
 
       const document = await getDocumentById({
-        id: Number(documentId),
+        documentId: Number(documentId),
         userId: user.id,
         teamId: team?.id,
       });
@@ -173,12 +207,12 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     }
   }),
 
-  deleteDocument: authenticatedMiddleware(async (args, user, team) => {
+  deleteDocument: authenticatedMiddleware(async (args, user, team, { metadata }) => {
     const { id: documentId } = args.params;
 
     try {
       const document = await getDocumentById({
-        id: Number(documentId),
+        documentId: Number(documentId),
         userId: user.id,
         teamId: team?.id,
       });
@@ -196,6 +230,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
         id: document.id,
         userId: user.id,
         teamId: team?.id,
+        requestMetadata: metadata,
       });
 
       return {
@@ -212,7 +247,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     }
   }),
 
-  createDocument: authenticatedMiddleware(async (args, user, team) => {
+  createDocument: authenticatedMiddleware(async (args, user, team, { metadata }) => {
     const { body } = args;
 
     try {
@@ -237,18 +272,10 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       }
 
       const dateFormat = body.meta.dateFormat
-        ? DATE_FORMATS.find((format) => format.label === body.meta.dateFormat)
+        ? DATE_FORMATS.find((format) => format.value === body.meta.dateFormat)
         : DATE_FORMATS.find((format) => format.value === DEFAULT_DOCUMENT_DATE_FORMAT);
-      const timezone = body.meta.timezone
-        ? TIME_ZONES.find((tz) => tz === body.meta.timezone)
-        : DEFAULT_DOCUMENT_TIME_ZONE;
 
-      const isDateFormatValid = body.meta.dateFormat
-        ? DATE_FORMATS.some((format) => format.label === dateFormat?.label)
-        : true;
-      const isTimeZoneValid = body.meta.timezone ? TIME_ZONES.includes(String(timezone)) : true;
-
-      if (!isDateFormatValid) {
+      if (body.meta.dateFormat && !dateFormat) {
         return {
           status: 400,
           body: {
@@ -256,6 +283,12 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
           },
         };
       }
+
+      const timezone = body.meta.timezone
+        ? TIME_ZONES.find((tz) => tz === body.meta.timezone)
+        : DEFAULT_DOCUMENT_TIME_ZONE;
+
+      const isTimeZoneValid = body.meta.timezone ? TIME_ZONES.includes(String(timezone)) : true;
 
       if (!isTimeZoneValid) {
         return {
@@ -282,19 +315,24 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
         teamId: team?.id,
         formValues: body.formValues,
         documentDataId: documentData.id,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
 
       await upsertDocumentMeta({
         documentId: document.id,
         userId: user.id,
+        teamId: team?.id,
         subject: body.meta.subject,
         message: body.meta.message,
         timezone,
         dateFormat: dateFormat?.value,
         redirectUrl: body.meta.redirectUrl,
         signingOrder: body.meta.signingOrder,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        language: body.meta.language,
+        typedSignatureEnabled: body.meta.typedSignatureEnabled,
+        distributionMethod: body.meta.distributionMethod,
+        emailSettings: body.meta.emailSettings,
+        requestMetadata: metadata,
       });
 
       if (body.authOptions) {
@@ -305,16 +343,16 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
           data: {
             ...body.authOptions,
           },
-          requestMetadata: extractNextApiRequestMetadata(args.req),
+          requestMetadata: metadata,
         });
       }
 
-      const recipients = await setRecipientsForDocument({
+      const { recipients } = await setDocumentRecipients({
         userId: user.id,
         teamId: team?.id,
         documentId: document.id,
         recipients: body.recipients,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
 
       return {
@@ -380,7 +418,14 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
 
       return {
         status: 200,
-        body: template,
+        body: {
+          ...template,
+          Field: template.fields.map((field) => ({
+            ...field,
+            fieldMeta: field.fieldMeta ? ZFieldMetaSchema.parse(field.fieldMeta) : null,
+          })),
+          Recipient: template.recipients,
+        },
       };
     } catch (err) {
       return AppError.toRestAPIError(err);
@@ -392,7 +437,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     const perPage = Number(args.query.perPage) || 10;
 
     try {
-      const { templates, totalPages } = await findTemplates({
+      const { data: templates, totalPages } = await findTemplates({
         page,
         perPage,
         userId: user.id,
@@ -402,7 +447,14 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       return {
         status: 200,
         body: {
-          templates,
+          templates: templates.map((template) => ({
+            ...template,
+            Field: template.fields.map((field) => ({
+              ...field,
+              fieldMeta: field.fieldMeta ? ZFieldMetaSchema.parse(field.fieldMeta) : null,
+            })),
+            Recipient: template.recipients,
+          })),
           totalPages,
         },
       };
@@ -411,7 +463,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     }
   }),
 
-  createDocumentFromTemplate: authenticatedMiddleware(async (args, user, team) => {
+  createDocumentFromTemplate: authenticatedMiddleware(async (args, user, team, { metadata }) => {
     const { body, params } = args;
 
     const { remaining } = await getServerLimits({ email: user.email, teamId: team?.id });
@@ -475,8 +527,9 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       await upsertDocumentMeta({
         documentId: document.id,
         userId: user.id,
+        teamId: team?.id,
         ...body.meta,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
     }
 
@@ -486,7 +539,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
         userId: user.id,
         teamId: team?.id,
         data: body.authOptions,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
     }
 
@@ -494,7 +547,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       status: 200,
       body: {
         documentId: document.id,
-        recipients: document.Recipient.map((recipient) => ({
+        recipients: document.recipients.map((recipient) => ({
           recipientId: recipient.id,
           name: recipient.name,
           email: recipient.email,
@@ -508,7 +561,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     };
   }),
 
-  generateDocumentFromTemplate: authenticatedMiddleware(async (args, user, team) => {
+  generateDocumentFromTemplate: authenticatedMiddleware(async (args, user, team, { metadata }) => {
     const { body, params } = args;
 
     const { remaining } = await getServerLimits({ email: user.email, teamId: team?.id });
@@ -524,7 +577,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
 
     const templateId = Number(params.templateId);
 
-    let document: CreateDocumentFromTemplateResponse | null = null;
+    let document: Awaited<ReturnType<typeof createDocumentFromTemplate>> | null = null;
 
     try {
       document = await createDocumentFromTemplate({
@@ -537,6 +590,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
           title: body.title,
           ...body.meta,
         },
+        requestMetadata: metadata,
       });
     } catch (err) {
       return AppError.toRestAPIError(err);
@@ -579,7 +633,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
         userId: user.id,
         teamId: team?.id,
         data: body.authOptions,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
     }
 
@@ -587,84 +641,71 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       status: 200,
       body: {
         documentId: document.id,
-        recipients: document.Recipient.map((recipient) => ({
+        recipients: document.recipients.map((recipient) => ({
           recipientId: recipient.id,
           name: recipient.name,
           email: recipient.email,
           token: recipient.token,
           role: recipient.role,
           signingOrder: recipient.signingOrder,
-
           signingUrl: `${NEXT_PUBLIC_WEBAPP_URL()}/sign/${recipient.token}`,
         })),
       },
     };
   }),
 
-  sendDocument: authenticatedMiddleware(async (args, user, team) => {
-    const { id } = args.params;
-    const { sendEmail = true } = args.body ?? {};
-
-    const document = await getDocumentById({ id: Number(id), userId: user.id, teamId: team?.id });
-
-    if (!document) {
-      return {
-        status: 404,
-        body: {
-          message: 'Document not found',
-        },
-      };
-    }
-
-    if (document.status === DocumentStatus.COMPLETED) {
-      return {
-        status: 400,
-        body: {
-          message: 'Document is already complete',
-        },
-      };
-    }
+  sendDocument: authenticatedMiddleware(async (args, user, team, { metadata }) => {
+    const { id: documentId } = args.params;
+    const { sendEmail, sendCompletionEmails } = args.body;
 
     try {
-      //   await setRecipientsForDocument({
-      //     userId: user.id,
-      //     documentId: Number(id),
-      //     recipients: [
-      //       {
-      //         email: body.signerEmail,
-      //         name: body.signerName ?? '',
-      //       },
-      //     ],
-      //   });
+      const document = await getDocumentById({
+        documentId: Number(documentId),
+        userId: user.id,
+        teamId: team?.id,
+      });
 
-      //   await setFieldsForDocument({
-      //     documentId: Number(id),
-      //     userId: user.id,
-      //     fields: body.fields.map((field) => ({
-      //       signerEmail: body.signerEmail,
-      //       type: field.fieldType,
-      //       pageNumber: field.pageNumber,
-      //       pageX: field.pageX,
-      //       pageY: field.pageY,
-      //       pageWidth: field.pageWidth,
-      //       pageHeight: field.pageHeight,
-      //     })),
-      //   });
+      if (!document) {
+        return {
+          status: 404,
+          body: {
+            message: 'Document not found',
+          },
+        };
+      }
 
-      //   if (body.emailBody || body.emailSubject) {
-      //     await upsertDocumentMeta({
-      //       documentId: Number(id),
-      //       subject: body.emailSubject ?? '',
-      //       message: body.emailBody ?? '',
-      //     });
-      //   }
+      if (document.status === DocumentStatus.COMPLETED) {
+        return {
+          status: 400,
+          body: {
+            message: 'Document is already complete',
+          },
+        };
+      }
 
-      const { Recipient: recipients, ...sentDocument } = await sendDocument({
-        documentId: Number(id),
+      const emailSettings = extractDerivedDocumentEmailSettings(document.documentMeta);
+
+      // Update document email settings if sendCompletionEmails is provided
+      if (typeof sendCompletionEmails === 'boolean') {
+        await upsertDocumentMeta({
+          documentId: document.id,
+          userId: user.id,
+          teamId: team?.id,
+          emailSettings: {
+            ...emailSettings,
+            documentCompleted: sendCompletionEmails,
+            ownerDocumentCompleted: sendCompletionEmails,
+          },
+          requestMetadata: metadata,
+        });
+      }
+
+      const { recipients, ...sentDocument } = await sendDocument({
+        documentId: document.id,
         userId: user.id,
         teamId: team?.id,
         sendEmail,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
 
       return {
@@ -688,7 +729,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     }
   }),
 
-  resendDocument: authenticatedMiddleware(async (args, user, team) => {
+  resendDocument: authenticatedMiddleware(async (args, user, team, { metadata }) => {
     const { id: documentId } = args.params;
     const { recipients } = args.body;
 
@@ -698,7 +739,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
         documentId: Number(documentId),
         recipients,
         teamId: team?.id,
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
 
       return {
@@ -717,12 +758,12 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     }
   }),
 
-  createRecipient: authenticatedMiddleware(async (args, user, team) => {
+  createRecipient: authenticatedMiddleware(async (args, user, team, { metadata }) => {
     const { id: documentId } = args.params;
     const { name, email, role, authOptions, signingOrder } = args.body;
 
     const document = await getDocumentById({
-      id: Number(documentId),
+      documentId: Number(documentId),
       userId: user.id,
       teamId: team?.id,
     });
@@ -763,7 +804,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     }
 
     try {
-      const newRecipients = await setRecipientsForDocument({
+      const { recipients: newRecipients } = await setDocumentRecipients({
         documentId: Number(documentId),
         userId: user.id,
         teamId: team?.id,
@@ -781,7 +822,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
             actionAuth: authOptions?.actionAuth ?? null,
           },
         ],
-        requestMetadata: extractNextApiRequestMetadata(args.req),
+        requestMetadata: metadata,
       });
 
       const newRecipient = newRecipients.find((recipient) => recipient.email === email);
@@ -813,7 +854,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     const { name, email, role, authOptions, signingOrder } = args.body;
 
     const document = await getDocumentById({
-      id: Number(documentId),
+      documentId: Number(documentId),
       userId: user.id,
       teamId: team?.id,
     });
@@ -872,7 +913,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     const { id: documentId, recipientId } = args.params;
 
     const document = await getDocumentById({
-      id: Number(documentId),
+      documentId: Number(documentId),
       userId: user.id,
       teamId: team?.id,
     });
@@ -977,7 +1018,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
               throw new Error('Invalid page number');
             }
 
-            const recipient = await getRecipientById({
+            const recipient = await getRecipientByIdV1Api({
               id: Number(recipientId),
               documentId: Number(documentId),
             }).catch(() => null);
@@ -1012,12 +1053,12 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
               .with('TEXT', () => ZTextFieldMeta.safeParse(fieldMeta))
               .with('SIGNATURE', 'INITIALS', 'DATE', 'EMAIL', 'NAME', () => ({
                 success: true,
-                data: {},
+                data: undefined,
               }))
               .with('FREE_SIGNATURE', () => ({
                 success: false,
                 error: 'FREE_SIGNATURE is not supported',
-                data: {},
+                data: undefined,
               }))
               .exhaustive();
 
@@ -1040,7 +1081,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
                 fieldMeta: result.data,
               },
               include: {
-                Recipient: true,
+                recipient: true,
               },
             });
 
@@ -1055,7 +1096,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
                 },
                 data: {
                   fieldId: field.secondaryId,
-                  fieldRecipientEmail: field.Recipient?.email ?? '',
+                  fieldRecipientEmail: field.recipient?.email ?? '',
                   fieldRecipientId: recipientId,
                   fieldType: field.type,
                 },
@@ -1074,7 +1115,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
               pageWidth: Number(field.width),
               pageHeight: Number(field.height),
               customText: field.customText,
-              fieldMeta: ZFieldMetaSchema.parse(field.fieldMeta),
+              fieldMeta: field.fieldMeta ? ZFieldMetaSchema.parse(field.fieldMeta) : undefined,
               inserted: field.inserted,
             };
           }),
@@ -1099,7 +1140,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       args.body;
 
     const document = await getDocumentById({
-      id: Number(documentId),
+      documentId: Number(documentId),
       userId: user.id,
       teamId: team?.id,
     });
@@ -1122,7 +1163,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       };
     }
 
-    const recipient = await getRecipientById({
+    const recipient = await getRecipientByIdV1Api({
       id: Number(recipientId),
       documentId: Number(documentId),
     }).catch(() => null);
@@ -1188,7 +1229,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
     const { id: documentId, fieldId } = args.params;
 
     const document = await getDocumentById({
-      id: Number(documentId),
+      documentId: Number(documentId),
       userId: user.id,
     });
 
@@ -1226,7 +1267,7 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       };
     }
 
-    const recipient = await getRecipientById({
+    const recipient = await getRecipientByIdV1Api({
       id: Number(field.recipientId),
       documentId: Number(documentId),
     }).catch(() => null);
@@ -1279,4 +1320,306 @@ export const ApiContractV1Implementation = createNextRoute(ApiContractV1, {
       },
     };
   }),
+
+  findTeamMembers: authenticatedMiddleware(async (args, user, team) => {
+    const { id: teamId } = args.params;
+
+    if (team?.id !== Number(teamId)) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const self = await prisma.teamMember.findFirst({
+      where: {
+        userId: user.id,
+        teamId: team.id,
+      },
+    });
+
+    if (self?.role !== TeamMemberRole.ADMIN) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const members = await prisma.teamMember.findMany({
+      where: {
+        teamId: team.id,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    return {
+      status: 200,
+      body: {
+        members: members.map((member) => ({
+          id: member.id,
+          email: member.user.email,
+          role: member.role,
+        })),
+      },
+    };
+  }),
+
+  inviteTeamMember: authenticatedMiddleware(async (args, user, team) => {
+    const { id: teamId } = args.params;
+
+    const { email, role } = args.body;
+
+    if (team?.id !== Number(teamId)) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const self = await prisma.teamMember.findFirst({
+      where: {
+        userId: user.id,
+        teamId: team.id,
+      },
+    });
+
+    if (self?.role !== TeamMemberRole.ADMIN) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const hasAlreadyBeenInvited = await prisma.teamMember.findFirst({
+      where: {
+        teamId: team.id,
+        user: {
+          email,
+        },
+      },
+    });
+
+    if (hasAlreadyBeenInvited) {
+      return {
+        status: 400,
+        body: {
+          message: 'This user has already been invited to the team',
+        },
+      };
+    }
+
+    await createTeamMemberInvites({
+      userId: user.id,
+      userName: user.name ?? '',
+      teamId: team.id,
+      invitations: [
+        {
+          email,
+          role,
+        },
+      ],
+    });
+
+    return {
+      status: 200,
+      body: {
+        message: 'An invite has been sent to the member',
+      },
+    };
+  }),
+
+  updateTeamMember: authenticatedMiddleware(async (args, user, team) => {
+    const { id: teamId, memberId } = args.params;
+
+    const { role } = args.body;
+
+    if (team?.id !== Number(teamId)) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const self = await prisma.teamMember.findFirst({
+      where: {
+        userId: user.id,
+        teamId: team.id,
+      },
+    });
+
+    if (self?.role !== TeamMemberRole.ADMIN) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const member = await prisma.teamMember.findFirst({
+      where: {
+        id: Number(memberId),
+        teamId: team.id,
+      },
+    });
+
+    if (!member) {
+      return {
+        status: 404,
+        body: {
+          message: 'The provided member id does not exist.',
+        },
+      };
+    }
+
+    const updatedMember = await prisma.teamMember.update({
+      where: {
+        id: member.id,
+      },
+      data: {
+        role,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    return {
+      status: 200,
+      body: {
+        id: updatedMember.id,
+        email: updatedMember.user.email,
+        role: updatedMember.role,
+      },
+    };
+  }),
+
+  removeTeamMember: authenticatedMiddleware(async (args, user, team) => {
+    const { id: teamId, memberId } = args.params;
+
+    if (team?.id !== Number(teamId)) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const self = await prisma.teamMember.findFirst({
+      where: {
+        userId: user.id,
+        teamId: team.id,
+      },
+    });
+
+    if (self?.role !== TeamMemberRole.ADMIN) {
+      return {
+        status: 403,
+        body: {
+          message: 'You are not authorized to perform actions against this team.',
+        },
+      };
+    }
+
+    const member = await prisma.teamMember.findFirst({
+      where: {
+        id: Number(memberId),
+        teamId: Number(teamId),
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    if (!member) {
+      return {
+        status: 404,
+        body: {
+          message: 'Member not found',
+        },
+      };
+    }
+
+    if (team.ownerUserId === member.userId) {
+      return {
+        status: 403,
+        body: {
+          message: 'You cannot remove the owner of the team',
+        },
+      };
+    }
+
+    if (member.userId === user.id) {
+      return {
+        status: 403,
+        body: {
+          message: 'You cannot remove yourself from the team',
+        },
+      };
+    }
+
+    await deleteTeamMembers({
+      userId: user.id,
+      teamId: team.id,
+      teamMemberIds: [member.id],
+    });
+
+    return {
+      status: 200,
+      body: {
+        id: member.id,
+        email: member.user.email,
+        role: member.role,
+      },
+    };
+  }),
 });
+
+const updateDocument = async ({
+  documentId,
+  userId,
+  teamId,
+  data,
+}: {
+  documentId: number;
+  data: Prisma.DocumentUpdateInput;
+  userId: number;
+  teamId?: number;
+}) => {
+  return await prisma.document.update({
+    where: {
+      id: documentId,
+      ...(teamId
+        ? {
+            team: {
+              id: teamId,
+              members: {
+                some: {
+                  userId,
+                },
+              },
+            },
+          }
+        : {
+            userId,
+            teamId: null,
+          }),
+    },
+    data: {
+      ...data,
+    },
+  });
+};

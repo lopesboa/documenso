@@ -46,6 +46,7 @@ export type SignatureFieldProps = {
     | 'Email'
     | 'Name'
     | 'Signature'
+    | 'Text'
     | 'Radio'
     | 'Dropdown'
     | 'Number'
@@ -128,7 +129,7 @@ export const SigningFieldContainer = ({
   };
 
   return (
-    <div className={cn('[container-type:size]', type === 'Checkbox' ? 'group' : '')}>
+    <div className={cn('[container-type:size]', { group: type === 'Checkbox' })}>
       <FieldRootContainer field={field}>
         {!field.inserted && !loading && !readOnlyField && (
           <button

@@ -23,9 +23,8 @@ import { useSession } from 'next-auth/react';
 
 import { downloadPDF } from '@documenso/lib/client-only/download-pdf';
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
-import { DocumentStatus, RecipientRole } from '@documenso/prisma/client';
 import type { Document, Recipient, Team, User } from '@documenso/prisma/client';
-import type { DocumentWithData } from '@documenso/prisma/types/document-with-data';
+import { DocumentStatus, RecipientRole } from '@documenso/prisma/client';
 import { trpc as trpcClient } from '@documenso/trpc/client';
 import { DocumentShareButton } from '@documenso/ui/components/document/document-share-button';
 import {
@@ -37,6 +36,8 @@ import {
 } from '@documenso/ui/primitives/dropdown-menu';
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
+import { DocumentRecipientLinkCopyDialog } from '~/components/document/document-recipient-link-copy-dialog';
+
 import { ResendDocumentActionItem } from './_action-items/resend-document';
 import { DeleteDocumentDialog } from './delete-document-dialog';
 import { DuplicateDocumentDialog } from './duplicate-document-dialog';
@@ -44,8 +45,8 @@ import { MoveDocumentDialog } from './move-document-dialog';
 
 export type DataTableActionDropdownProps = {
   row: Document & {
-    User: Pick<User, 'id' | 'name' | 'email'>;
-    Recipient: Recipient[];
+    user: Pick<User, 'id' | 'name' | 'email'>;
+    recipients: Recipient[];
     team: Pick<Team, 'id' | 'url'> | null;
   };
   team?: Pick<Team, 'id' | 'url'> & { teamEmail?: string };
@@ -64,12 +65,12 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
     return null;
   }
 
-  const recipient = row.Recipient.find((recipient) => recipient.email === session.user.email);
+  const recipient = row.recipients.find((recipient) => recipient.email === session.user.email);
 
-  const isOwner = row.User.id === session.user.id;
+  const isOwner = row.user.id === session.user.id;
   // const isRecipient = !!recipient;
   const isDraft = row.status === DocumentStatus.DRAFT;
-  // const isPending = row.status === DocumentStatus.PENDING;
+  const isPending = row.status === DocumentStatus.PENDING;
   const isComplete = row.status === DocumentStatus.COMPLETED;
   // const isSigned = recipient?.signingStatus === SigningStatus.SIGNED;
   const isCurrentTeamDocument = team && row.team?.url === team.url;
@@ -79,18 +80,13 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
 
   const onDownloadClick = async () => {
     try {
-      let document: DocumentWithData | null = null;
-
-      if (!recipient) {
-        document = await trpcClient.document.getDocumentById.query({
-          id: row.id,
-          teamId: team?.id,
-        });
-      } else {
-        document = await trpcClient.document.getDocumentByToken.query({
-          token: recipient.token,
-        });
-      }
+      const document = !recipient
+        ? await trpcClient.document.getDocumentById.query({
+            documentId: row.id,
+          })
+        : await trpcClient.document.getDocumentByToken.query({
+            token: recipient.token,
+          });
 
       const documentData = document?.documentData;
 
@@ -108,7 +104,7 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
     }
   };
 
-  const nonSignedRecipients = row.Recipient.filter((item) => item.signingStatus !== 'SIGNED');
+  const nonSignedRecipients = row.recipients.filter((item) => item.signingStatus !== 'SIGNED');
 
   return (
     <DropdownMenu>
@@ -166,7 +162,7 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
         </DropdownMenuItem>
 
         {/* We don't want to allow teams moving documents across at the moment. */}
-        {!team && (
+        {!team && !row.teamId && (
           <DropdownMenuItem onClick={() => setMoveDialogOpen(true)}>
             <MoveRight className="mr-2 h-4 w-4" />
             <Trans>Move to Team</Trans>
@@ -190,6 +186,20 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
         <DropdownMenuLabel>
           <Trans>Share</Trans>
         </DropdownMenuLabel>
+
+        {canManageDocument && (
+          <DocumentRecipientLinkCopyDialog
+            recipients={row.recipients}
+            trigger={
+              <DropdownMenuItem disabled={!isPending} asChild onSelect={(e) => e.preventDefault()}>
+                <div>
+                  <Copy className="mr-2 h-4 w-4" />
+                  <Trans>Signing Links</Trans>
+                </div>
+              </DropdownMenuItem>
+            }
+          />
+        )}
 
         <ResendDocumentActionItem document={row} recipients={nonSignedRecipients} team={team} />
 
@@ -223,14 +233,12 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
         onOpenChange={setMoveDialogOpen}
       />
 
-      {isDuplicateDialogOpen && (
-        <DuplicateDocumentDialog
-          id={row.id}
-          open={isDuplicateDialogOpen}
-          onOpenChange={setDuplicateDialogOpen}
-          team={team}
-        />
-      )}
+      <DuplicateDocumentDialog
+        id={row.id}
+        open={isDuplicateDialogOpen}
+        onOpenChange={setDuplicateDialogOpen}
+        team={team}
+      />
     </DropdownMenu>
   );
 };

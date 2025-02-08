@@ -12,11 +12,12 @@ import { getFieldsForToken } from '@documenso/lib/server-only/field/get-fields-f
 import { getIsRecipientsTurnToSign } from '@documenso/lib/server-only/recipient/get-is-recipient-turn';
 import { getRecipientByToken } from '@documenso/lib/server-only/recipient/get-recipient-by-token';
 import { getRecipientSignatures } from '@documenso/lib/server-only/recipient/get-recipient-signatures';
+import { getRecipientsForAssistant } from '@documenso/lib/server-only/recipient/get-recipients-for-assistant';
 import { getUserByEmail } from '@documenso/lib/server-only/user/get-user-by-email';
 import { symmetricDecrypt } from '@documenso/lib/universal/crypto';
 import { extractNextHeaderRequestMetadata } from '@documenso/lib/universal/extract-request-metadata';
 import { extractDocumentAuthMethods } from '@documenso/lib/utils/document-auth';
-import { DocumentStatus, SigningStatus } from '@documenso/prisma/client';
+import { DocumentStatus, RecipientRole, SigningStatus } from '@documenso/prisma/client';
 
 import { DocumentAuthProvider } from './document-auth-provider';
 import { NoLongerAvailable } from './no-longer-available';
@@ -31,7 +32,7 @@ export type SigningPageProps = {
 };
 
 export default async function SigningPage({ params: { token } }: SigningPageProps) {
-  setupI18nSSR();
+  await setupI18nSSR();
 
   if (!token) {
     return notFound();
@@ -43,20 +44,14 @@ export default async function SigningPage({ params: { token } }: SigningPageProp
 
   const requestMetadata = extractNextHeaderRequestMetadata(requestHeaders);
 
-  const isRecipientsTurn = await getIsRecipientsTurnToSign({ token });
-
-  if (!isRecipientsTurn) {
-    return redirect(`/sign/${token}/waiting`);
-  }
-
-  const [document, fields, recipient, completedFields] = await Promise.all([
+  const [document, recipient, fields, completedFields] = await Promise.all([
     getDocumentAndSenderByToken({
       token,
       userId: user?.id,
       requireAccessAuth: false,
     }).catch(() => null),
-    getFieldsForToken({ token }),
     getRecipientByToken({ token }).catch(() => null),
+    getFieldsForToken({ token }),
     getCompletedFieldsForToken({ token }),
   ]);
 
@@ -68,6 +63,21 @@ export default async function SigningPage({ params: { token } }: SigningPageProp
   ) {
     return notFound();
   }
+
+  const recipientWithFields = { ...recipient, fields };
+
+  const isRecipientsTurn = await getIsRecipientsTurnToSign({ token });
+
+  if (!isRecipientsTurn) {
+    return redirect(`/sign/${token}/waiting`);
+  }
+
+  const allRecipients =
+    recipient.role === RecipientRole.ASSISTANT
+      ? await getRecipientsForAssistant({
+          token,
+        })
+      : [];
 
   const { derivedRecipientAccessAuth } = extractDocumentAuthMethods({
     documentAuth: document.authOptions,
@@ -98,6 +108,10 @@ export default async function SigningPage({ params: { token } }: SigningPageProp
   }).catch(() => null);
 
   const { documentMeta } = document;
+
+  if (recipient.signingStatus === SigningStatus.REJECTED) {
+    return redirect(`/sign/${token}/rejected`);
+  }
 
   if (
     document.status === DocumentStatus.COMPLETED ||
@@ -149,11 +163,12 @@ export default async function SigningPage({ params: { token } }: SigningPageProp
         user={user}
       >
         <SigningPageView
-          recipient={recipient}
+          recipient={recipientWithFields}
           document={document}
           fields={fields}
           completedFields={completedFields}
           isRecipientsTurn={isRecipientsTurn}
+          allRecipients={allRecipients}
         />
       </DocumentAuthProvider>
     </SigningProvider>

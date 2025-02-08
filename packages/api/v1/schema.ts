@@ -2,7 +2,7 @@ import { extendZodWithOpenApi } from '@anatine/zod-openapi';
 import { z } from 'zod';
 
 import { DATE_FORMATS, DEFAULT_DOCUMENT_DATE_FORMAT } from '@documenso/lib/constants/date-formats';
-import '@documenso/lib/constants/time-zones';
+import { SUPPORTED_LANGUAGE_CODES } from '@documenso/lib/constants/i18n';
 import { DEFAULT_DOCUMENT_TIME_ZONE, TIME_ZONES } from '@documenso/lib/constants/time-zones';
 import { ZUrlSchema } from '@documenso/lib/schemas/common';
 import {
@@ -10,15 +10,18 @@ import {
   ZDocumentActionAuthTypesSchema,
   ZRecipientActionAuthTypesSchema,
 } from '@documenso/lib/types/document-auth';
+import { ZDocumentEmailSettingsSchema } from '@documenso/lib/types/document-email';
 import { ZFieldMetaSchema } from '@documenso/lib/types/field-meta';
 import {
   DocumentDataType,
+  DocumentDistributionMethod,
   DocumentSigningOrder,
   FieldType,
   ReadStatus,
   RecipientRole,
   SendStatus,
   SigningStatus,
+  TeamMemberRole,
   TemplateType,
 } from '@documenso/prisma/client';
 
@@ -55,6 +58,25 @@ export const ZSuccessfulDocumentResponseSchema = z.object({
 
 export const ZSuccessfulGetDocumentResponseSchema = ZSuccessfulDocumentResponseSchema.extend({
   recipients: z.lazy(() => z.array(ZSuccessfulRecipientResponseSchema)),
+  fields: z.lazy(() =>
+    ZFieldSchema.pick({
+      id: true,
+      documentId: true,
+      recipientId: true,
+      type: true,
+      page: true,
+      positionX: true,
+      positionY: true,
+      width: true,
+      height: true,
+      customText: true,
+      fieldMeta: true,
+    })
+      .extend({
+        fieldMeta: ZFieldMetaSchema.nullish(),
+      })
+      .array(),
+  ),
 });
 
 export type TSuccessfulGetDocumentResponseSchema = z.infer<
@@ -65,9 +87,16 @@ export type TSuccessfulDocumentResponseSchema = z.infer<typeof ZSuccessfulDocume
 
 export const ZSendDocumentForSigningMutationSchema = z
   .object({
-    sendEmail: z.boolean().optional().default(true),
+    sendEmail: z.boolean().optional().default(true).openapi({
+      description:
+        'Whether to send an email to the recipients asking them to action the document. If you disable this, you will need to manually distribute the document to the recipients using the generated signing links.',
+    }),
+    sendCompletionEmails: z.boolean().optional().openapi({
+      description:
+        'Whether to send completion emails when the document is fully signed. This will override the document email settings.',
+    }),
   })
-  .or(z.literal('').transform(() => ({ sendEmail: true })));
+  .or(z.literal('').transform(() => ({ sendEmail: true, sendCompletionEmails: undefined })));
 
 export type TSendDocumentForSigningMutationSchema = typeof ZSendDocumentForSigningMutationSchema;
 
@@ -126,14 +155,23 @@ export const ZCreateDocumentMutationSchema = z.object({
         }),
       redirectUrl: z.string(),
       signingOrder: z.nativeEnum(DocumentSigningOrder).optional(),
+      language: z.enum(SUPPORTED_LANGUAGE_CODES).optional(),
+      typedSignatureEnabled: z.boolean().optional().default(true),
+      distributionMethod: z.nativeEnum(DocumentDistributionMethod).optional(),
+      emailSettings: ZDocumentEmailSettingsSchema.optional(),
     })
-    .partial(),
+    .partial()
+    .optional()
+    .default({}),
   authOptions: z
     .object({
       globalAccessAuth: ZDocumentAccessAuthTypesSchema.optional(),
       globalActionAuth: ZDocumentActionAuthTypesSchema.optional(),
     })
-    .optional(),
+    .optional()
+    .openapi({
+      description: 'The globalActionAuth property is only available for Enterprise accounts.',
+    }),
   formValues: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
 });
 
@@ -180,6 +218,7 @@ export const ZCreateDocumentFromTemplateMutationSchema = z.object({
       dateFormat: z.string(),
       redirectUrl: z.string(),
       signingOrder: z.nativeEnum(DocumentSigningOrder).optional(),
+      language: z.enum(SUPPORTED_LANGUAGE_CODES).optional(),
     })
     .partial()
     .optional(),
@@ -219,14 +258,14 @@ export type TCreateDocumentFromTemplateMutationResponseSchema = z.infer<
 
 export const ZGenerateDocumentFromTemplateMutationSchema = z.object({
   title: z.string().optional(),
-  externalId: z.string().nullish(),
+  externalId: z.string().optional(),
   recipients: z
     .array(
       z.object({
         id: z.number(),
+        email: z.string().email(),
         name: z.string().optional(),
-        email: z.string().email().min(1),
-        signingOrder: z.number().nullish(),
+        signingOrder: z.number().optional(),
       }),
     )
     .refine(
@@ -245,7 +284,11 @@ export const ZGenerateDocumentFromTemplateMutationSchema = z.object({
       timezone: z.string(),
       dateFormat: z.string(),
       redirectUrl: ZUrlSchema,
-      signingOrder: z.nativeEnum(DocumentSigningOrder).optional(),
+      signingOrder: z.nativeEnum(DocumentSigningOrder),
+      language: z.enum(SUPPORTED_LANGUAGE_CODES),
+      distributionMethod: z.nativeEnum(DocumentDistributionMethod),
+      typedSignatureEnabled: z.boolean(),
+      emailSettings: ZDocumentEmailSettingsSchema,
     })
     .partial()
     .optional(),
@@ -292,7 +335,10 @@ export const ZCreateRecipientMutationSchema = z.object({
     .object({
       actionAuth: ZRecipientActionAuthTypesSchema.optional(),
     })
-    .optional(),
+    .optional()
+    .openapi({
+      description: 'The authOptions property is only available for Enterprise accounts.',
+    }),
 });
 
 /**
@@ -407,7 +453,7 @@ export const ZSuccessfulSigningResponseSchema = z
   .object({
     message: z.string(),
   })
-  .and(ZSuccessfulGetDocumentResponseSchema);
+  .and(ZSuccessfulGetDocumentResponseSchema.omit({ fields: true }));
 
 export type TSuccessfulSigningResponseSchema = z.infer<typeof ZSuccessfulSigningResponseSchema>;
 
@@ -481,6 +527,7 @@ export const ZFieldSchema = z.object({
   height: z.unknown(),
   customText: z.string(),
   inserted: z.boolean(),
+  fieldMeta: ZFieldMetaSchema.nullish().openapi({}),
 });
 
 export const ZTemplateWithDataSchema = ZTemplateSchema.extend({
@@ -498,6 +545,8 @@ export const ZTemplateWithDataSchema = ZTemplateSchema.extend({
   }),
   Field: ZFieldSchema.pick({
     id: true,
+    documentId: true,
+    templateId: true,
     recipientId: true,
     type: true,
     page: true,
@@ -505,6 +554,8 @@ export const ZTemplateWithDataSchema = ZTemplateSchema.extend({
     positionY: true,
     width: true,
     height: true,
+    customText: true,
+    fieldMeta: true,
   }).array(),
   Recipient: ZRecipientSchema.pick({
     id: true,
@@ -531,4 +582,42 @@ export const ZSuccessfulGetTemplatesResponseSchema = z.object({
 export const ZGetTemplatesQuerySchema = z.object({
   page: z.coerce.number().min(1).optional().default(1),
   perPage: z.coerce.number().min(1).optional().default(1),
+});
+
+export const ZFindTeamMembersResponseSchema = z.object({
+  members: z.array(
+    z.object({
+      id: z.number(),
+      email: z.string().email(),
+      role: z.nativeEnum(TeamMemberRole),
+    }),
+  ),
+});
+
+export const ZInviteTeamMemberMutationSchema = z.object({
+  email: z
+    .string()
+    .email()
+    .transform((email) => email.toLowerCase()),
+  role: z.nativeEnum(TeamMemberRole).optional().default(TeamMemberRole.MEMBER),
+});
+
+export const ZSuccessfulInviteTeamMemberResponseSchema = z.object({
+  message: z.string(),
+});
+
+export const ZUpdateTeamMemberMutationSchema = z.object({
+  role: z.nativeEnum(TeamMemberRole),
+});
+
+export const ZSuccessfulUpdateTeamMemberResponseSchema = z.object({
+  id: z.number(),
+  email: z.string().email(),
+  role: z.nativeEnum(TeamMemberRole),
+});
+
+export const ZSuccessfulRemoveTeamMemberResponseSchema = z.object({
+  id: z.number(),
+  email: z.string().email(),
+  role: z.nativeEnum(TeamMemberRole),
 });

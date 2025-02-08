@@ -4,13 +4,14 @@ import { useTransition } from 'react';
 
 import { useRouter } from 'next/navigation';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { Loader } from 'lucide-react';
 
 import { DO_NOT_INVALIDATE_QUERY_ON_MUTATION } from '@documenso/lib/constants/trpc';
 import { AppError, AppErrorCode } from '@documenso/lib/errors/app-error';
 import type { TRecipientActionAuth } from '@documenso/lib/types/document-auth';
 import { extractInitials } from '@documenso/lib/utils/recipient-formatter';
-import type { Recipient } from '@documenso/prisma/client';
 import type { FieldWithSignature } from '@documenso/prisma/types/field-with-signature';
 import { trpc } from '@documenso/trpc/react';
 import type {
@@ -20,35 +21,32 @@ import type {
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
 import { useRequiredSigningContext } from './provider';
+import { useRecipientContext } from './recipient-context';
 import { SigningFieldContainer } from './signing-field-container';
 
 export type InitialsFieldProps = {
   field: FieldWithSignature;
-  recipient: Recipient;
   onSignField?: (value: TSignFieldWithTokenMutationSchema) => Promise<void> | void;
   onUnsignField?: (value: TRemovedSignedFieldWithTokenMutationSchema) => Promise<void> | void;
 };
 
-export const InitialsField = ({
-  field,
-  recipient,
-  onSignField,
-  onUnsignField,
-}: InitialsFieldProps) => {
+export const InitialsField = ({ field, onSignField, onUnsignField }: InitialsFieldProps) => {
   const router = useRouter();
   const { toast } = useToast();
+  const { _ } = useLingui();
 
   const { fullName } = useRequiredSigningContext();
+  const { recipient, targetSigner, isAssistantMode } = useRecipientContext();
   const initials = extractInitials(fullName);
 
   const [isPending, startTransition] = useTransition();
 
-  const { mutateAsync: signFieldWithToken, isLoading: isSignFieldWithTokenLoading } =
+  const { mutateAsync: signFieldWithToken, isPending: isSignFieldWithTokenLoading } =
     trpc.field.signFieldWithToken.useMutation(DO_NOT_INVALIDATE_QUERY_ON_MUTATION);
 
   const {
     mutateAsync: removeSignedFieldWithToken,
-    isLoading: isRemoveSignedFieldWithTokenLoading,
+    isPending: isRemoveSignedFieldWithTokenLoading,
   } = trpc.field.removeSignedFieldWithToken.useMutation(DO_NOT_INVALIDATE_QUERY_ON_MUTATION);
 
   const isLoading = isSignFieldWithTokenLoading || isRemoveSignedFieldWithTokenLoading || isPending;
@@ -83,8 +81,10 @@ export const InitialsField = ({
       console.error(err);
 
       toast({
-        title: 'Error',
-        description: 'An error occurred while signing the document.',
+        title: _(msg`Error`),
+        description: isAssistantMode
+          ? _(msg`An error occurred while signing as assistant.`)
+          : _(msg`An error occurred while signing the document.`),
         variant: 'destructive',
       });
     }
@@ -109,8 +109,8 @@ export const InitialsField = ({
       console.error(err);
 
       toast({
-        title: 'Error',
-        description: 'An error occurred while removing the signature.',
+        title: _(msg`Error`),
+        description: _(msg`An error occurred while removing the field.`),
         variant: 'destructive',
       });
     }
@@ -125,13 +125,13 @@ export const InitialsField = ({
       )}
 
       {!field.inserted && (
-        <p className="group-hover:text-primary text-muted-foreground duration-200 group-hover:text-yellow-300">
-          Initials
+        <p className="group-hover:text-primary text-muted-foreground text-[clamp(0.425rem,25cqw,0.825rem)] duration-200 group-hover:text-yellow-300">
+          <Trans>Initials</Trans>
         </p>
       )}
 
       {field.inserted && (
-        <p className="text-muted-foreground dark:text-background/80 text-[clamp(0.625rem,1cqw,0.825rem)] duration-200">
+        <p className="text-muted-foreground dark:text-background/80 text-[clamp(0.425rem,25cqw,0.825rem)] duration-200">
           {field.customText}
         </p>
       )}

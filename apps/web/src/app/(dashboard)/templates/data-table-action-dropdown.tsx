@@ -5,10 +5,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 
 import { Trans } from '@lingui/macro';
-import { Copy, Edit, MoreHorizontal, MoveRight, Share2Icon, Trash2 } from 'lucide-react';
+import { Copy, Edit, MoreHorizontal, MoveRight, Share2Icon, Trash2, Upload } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 
-import { type FindTemplateRow } from '@documenso/lib/server-only/template/find-templates';
+import type { Recipient, Template, TemplateDirectLink } from '@documenso/prisma/client';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,13 +17,18 @@ import {
   DropdownMenuTrigger,
 } from '@documenso/ui/primitives/dropdown-menu';
 
+import { TemplateBulkSendDialog } from '~/components/templates/template-bulk-send-dialog';
+
 import { DeleteTemplateDialog } from './delete-template-dialog';
 import { DuplicateTemplateDialog } from './duplicate-template-dialog';
 import { MoveTemplateDialog } from './move-template-dialog';
 import { TemplateDirectLinkDialog } from './template-direct-link-dialog';
 
 export type DataTableActionDropdownProps = {
-  row: FindTemplateRow;
+  row: Template & {
+    directLink?: Pick<TemplateDirectLink, 'token' | 'enabled'> | null;
+    recipients: Recipient[];
+  };
   templateRootPath: string;
   teamId?: number;
 };
@@ -57,7 +62,7 @@ export const DataTableActionDropdown = ({
         <DropdownMenuLabel>Action</DropdownMenuLabel>
 
         <DropdownMenuItem disabled={!isOwner && !isTeamTemplate} asChild>
-          <Link href={`${templateRootPath}/${row.id}`}>
+          <Link href={`${templateRootPath}/${row.id}/edit`}>
             <Edit className="mr-2 h-4 w-4" />
             <Trans>Edit</Trans>
           </Link>
@@ -76,12 +81,23 @@ export const DataTableActionDropdown = ({
           <Trans>Direct link</Trans>
         </DropdownMenuItem>
 
-        {!teamId && (
+        {!teamId && !row.teamId && (
           <DropdownMenuItem onClick={() => setMoveDialogOpen(true)}>
             <MoveRight className="mr-2 h-4 w-4" />
             <Trans>Move to Team</Trans>
           </DropdownMenuItem>
         )}
+
+        <TemplateBulkSendDialog
+          templateId={row.id}
+          recipients={row.recipients}
+          trigger={
+            <div className="hover:bg-accent hover:text-accent-foreground relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors">
+              <Upload className="mr-2 h-4 w-4" />
+              <Trans>Bulk Send via CSV</Trans>
+            </div>
+          }
+        />
 
         <DropdownMenuItem
           disabled={!isOwner && !isTeamTemplate}

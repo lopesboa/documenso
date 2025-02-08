@@ -24,7 +24,7 @@ type AdminDocumentDetailsPageProps = {
 };
 
 export default async function AdminDocumentDetailsPage({ params }: AdminDocumentDetailsPageProps) {
-  const { i18n } = setupI18nSSR();
+  const { i18n } = await setupI18nSSR();
 
   const document = await getEntireDocument({ id: Number(params.id) });
 
@@ -59,7 +59,7 @@ export default async function AdminDocumentDetailsPage({ params }: AdminDocument
         <Trans>Admin Actions</Trans>
       </h2>
 
-      <AdminActions className="mt-2" document={document} recipients={document.Recipient} />
+      <AdminActions className="mt-2" document={document} recipients={document.recipients} />
 
       <hr className="my-4" />
       <h2 className="text-lg font-semibold">
@@ -68,7 +68,7 @@ export default async function AdminDocumentDetailsPage({ params }: AdminDocument
 
       <div className="mt-4">
         <Accordion type="multiple" className="space-y-4">
-          {document.Recipient.map((recipient) => (
+          {document.recipients.map((recipient) => (
             <AccordionItem
               key={recipient.id}
               value={recipient.id.toString()}

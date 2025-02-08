@@ -1,11 +1,24 @@
 import { type Field, type Recipient, RecipientRole, SigningStatus } from '@documenso/prisma/client';
 
+import { NEXT_PUBLIC_WEBAPP_URL } from '../constants/app';
+
+export const formatSigningLink = (token: string) => `${NEXT_PUBLIC_WEBAPP_URL()}/sign/${token}`;
+
 /**
  * Whether a recipient can be modified by the document owner.
  */
 export const canRecipientBeModified = (recipient: Recipient, fields: Field[]) => {
+  if (!recipient) {
+    return false;
+  }
+
+  // CCers can always be modified (unless document is completed).
+  if (recipient.role === RecipientRole.CC) {
+    return true;
+  }
+
   // Deny if the recipient has already signed the document.
-  if (!recipient || recipient.signingStatus === SigningStatus.SIGNED) {
+  if (recipient.signingStatus === SigningStatus.SIGNED) {
     return false;
   }
 

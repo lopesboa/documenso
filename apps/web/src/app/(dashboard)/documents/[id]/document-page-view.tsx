@@ -26,6 +26,7 @@ import { LazyPDFViewer } from '@documenso/ui/primitives/lazy-pdf-viewer';
 import { StackAvatarsWithTooltip } from '~/components/(dashboard)/avatar/stack-avatars-with-tooltip';
 import { DocumentHistorySheet } from '~/components/document/document-history-sheet';
 import { DocumentReadOnlyFields } from '~/components/document/document-read-only-fields';
+import { DocumentRecipientLinkCopyDialog } from '~/components/document/document-recipient-link-copy-dialog';
 import {
   DocumentStatus as DocumentStatusComponent,
   FRIENDLY_STATUS_MAP,
@@ -59,7 +60,7 @@ export const DocumentPageView = async ({ params, team }: DocumentPageViewProps) 
   const { user } = await getRequiredServerComponentSession();
 
   const document = await getDocumentById({
-    id: documentId,
+    documentId,
     userId: user.id,
     teamId: team?.id,
   }).catch(() => null);
@@ -70,10 +71,10 @@ export const DocumentPageView = async ({ params, team }: DocumentPageViewProps) 
 
   const documentVisibility = document?.visibility;
   const currentTeamMemberRole = team?.currentTeamMember?.role;
-  const isRecipient = document?.Recipient.find((recipient) => recipient.email === user.email);
+  const isRecipient = document?.recipients.find((recipient) => recipient.email === user.email);
   let canAccessDocument = true;
 
-  if (team && !isRecipient) {
+  if (team && !isRecipient && document?.userId !== user.id) {
     canAccessDocument = match([documentVisibility, currentTeamMemberRole])
       .with([DocumentVisibility.EVERYONE, TeamMemberRole.ADMIN], () => true)
       .with([DocumentVisibility.EVERYONE, TeamMemberRole.MANAGER], () => true)
@@ -124,16 +125,21 @@ export const DocumentPageView = async ({ params, team }: DocumentPageViewProps) 
     getFieldsForDocument({
       documentId,
       userId: user.id,
+      teamId: team?.id,
     }),
   ]);
 
   const documentWithRecipients = {
     ...document,
-    Recipient: recipients,
+    recipients,
   };
 
   return (
     <div className="mx-auto -mt-4 w-full max-w-screen-xl px-4 md:px-8">
+      {document.status === DocumentStatus.PENDING && (
+        <DocumentRecipientLinkCopyDialog recipients={recipients} />
+      )}
+
       <Link href={documentRootPath} className="flex items-center text-[#7AC455] hover:opacity-80">
         <ChevronLeft className="mr-2 inline-block h-5 w-5" />
         <Trans>Documents</Trans>
@@ -141,7 +147,10 @@ export const DocumentPageView = async ({ params, team }: DocumentPageViewProps) 
 
       <div className="flex flex-row justify-between truncate">
         <div>
-          <h1 className="mt-4 truncate text-2xl font-semibold md:text-3xl" title={document.title}>
+          <h1
+            className="mt-4 block max-w-[20rem] truncate text-2xl font-semibold md:max-w-[30rem] md:text-3xl"
+            title={document.title}
+          >
             {document.title}
           </h1>
 
@@ -213,7 +222,7 @@ export const DocumentPageView = async ({ params, team }: DocumentPageViewProps) 
                 <DocumentPageViewDropdown document={documentWithRecipients} team={team} />
               </div>
 
-              <p className="text-muted-foreground mt-2 px-4 text-sm ">
+              <p className="text-muted-foreground mt-2 px-4 text-sm">
                 {match(document.status)
                   .with(DocumentStatus.COMPLETED, () => (
                     <Trans>This document has been signed by all recipients</Trans>

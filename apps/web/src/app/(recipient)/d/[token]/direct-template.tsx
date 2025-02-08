@@ -7,10 +7,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { msg } from '@lingui/macro';
 import { useLingui } from '@lingui/react';
 
-import { RECIPIENT_ROLES_DESCRIPTION_ENG } from '@documenso/lib/constants/recipient-roles';
+import { RECIPIENT_ROLES_DESCRIPTION } from '@documenso/lib/constants/recipient-roles';
+import type { TTemplate } from '@documenso/lib/types/template';
 import type { Field } from '@documenso/prisma/client';
 import { type Recipient } from '@documenso/prisma/client';
-import type { TemplateWithDetails } from '@documenso/prisma/types/template';
 import { trpc } from '@documenso/trpc/react';
 import { Card, CardContent } from '@documenso/ui/primitives/card';
 import { DocumentFlowFormContainer } from '@documenso/ui/primitives/document-flow/document-flow-root';
@@ -28,9 +28,9 @@ import type { DirectTemplateLocalField } from './sign-direct-template';
 import { SignDirectTemplateForm } from './sign-direct-template';
 
 export type TemplatesDirectPageViewProps = {
-  template: TemplateWithDetails;
+  template: Omit<TTemplate, 'user'>;
   directTemplateToken: string;
-  directTemplateRecipient: Recipient & { Field: Field[] };
+  directTemplateRecipient: Recipient & { fields: Field[] };
 };
 
 type DirectTemplateStep = 'configure' | 'sign';
@@ -53,7 +53,9 @@ export const DirectTemplatePageView = ({
   const [step, setStep] = useState<DirectTemplateStep>('configure');
   const [isDocumentPdfLoaded, setIsDocumentPdfLoaded] = useState(false);
 
-  const recipientRoleDescription = RECIPIENT_ROLES_DESCRIPTION_ENG[directTemplateRecipient.role];
+  const recipientActionVerb = _(
+    RECIPIENT_ROLES_DESCRIPTION[directTemplateRecipient.role].actionVerb,
+  );
 
   const directTemplateFlow: Record<DirectTemplateStep, DocumentFlowStep> = {
     configure: {
@@ -62,9 +64,8 @@ export const DirectTemplatePageView = ({
       stepIndex: 1,
     },
     sign: {
-      // Todo: Translations
-      title: msg`${recipientRoleDescription.actionVerb} document`,
-      description: msg`${recipientRoleDescription.actionVerb} the document to complete the process.`,
+      title: msg`${recipientActionVerb} document`,
+      description: msg`${recipientActionVerb} the document to complete the process.`,
       stepIndex: 2,
     },
   };
@@ -163,7 +164,7 @@ export const DirectTemplatePageView = ({
             <SignDirectTemplateForm
               flowStep={directTemplateFlow.sign}
               directRecipient={recipient}
-              directRecipientFields={directTemplateRecipient.Field}
+              directRecipientFields={directTemplateRecipient.fields}
               template={template}
               onSubmit={onSignDirectTemplateSubmit}
             />

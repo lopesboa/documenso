@@ -40,9 +40,9 @@ export const MoveDocumentDialog = ({ documentId, open, onOpenChange }: MoveDocum
 
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
 
-  const { data: teams, isLoading: isLoadingTeams } = trpc.team.getTeams.useQuery();
+  const { data: teams, isPending: isLoadingTeams } = trpc.team.getTeams.useQuery();
 
-  const { mutateAsync: moveDocument, isLoading } = trpc.document.moveDocumentToTeam.useMutation({
+  const { mutateAsync: moveDocument, isPending } = trpc.document.moveDocumentToTeam.useMutation({
     onSuccess: () => {
       router.refresh();
       toast({
@@ -117,10 +117,10 @@ export const MoveDocumentDialog = ({ documentId, open, onOpenChange }: MoveDocum
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
+            <Trans>Cancel</Trans>
           </Button>
-          <Button onClick={onMove} loading={isLoading} disabled={!selectedTeamId || isLoading}>
-            {isLoading ? 'Moving...' : 'Move'}
+          <Button onClick={onMove} loading={isPending} disabled={!selectedTeamId || isPending}>
+            {isPending ? <Trans>Moving...</Trans> : <Trans>Move</Trans>}
           </Button>
         </DialogFooter>
       </DialogContent>

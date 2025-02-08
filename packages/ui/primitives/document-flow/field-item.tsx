@@ -35,6 +35,8 @@ export type FieldItemProps = {
   disabled?: boolean;
   minHeight?: number;
   minWidth?: number;
+  defaultHeight?: number;
+  defaultWidth?: number;
   onResize?: (_node: HTMLElement) => void;
   onMove?: (_node: HTMLElement) => void;
   onRemove?: () => void;
@@ -44,6 +46,10 @@ export type FieldItemProps = {
   onBlur?: () => void;
   recipientIndex?: number;
   hideRecipients?: boolean;
+  hasErrors?: boolean;
+  active?: boolean;
+  onFieldActivate?: () => void;
+  onFieldDeactivate?: () => void;
 };
 
 export const FieldItem = ({
@@ -52,6 +58,8 @@ export const FieldItem = ({
   disabled,
   minHeight,
   minWidth,
+  defaultHeight,
+  defaultWidth,
   onResize,
   onMove,
   onRemove,
@@ -61,20 +69,33 @@ export const FieldItem = ({
   onAdvancedSettings,
   recipientIndex = 0,
   hideRecipients = false,
+  hasErrors,
+  active,
+  onFieldActivate,
+  onFieldDeactivate,
 }: FieldItemProps) => {
-  const [active, setActive] = useState(false);
   const [coords, setCoords] = useState({
     pageX: 0,
     pageY: 0,
-    pageHeight: 0,
-    pageWidth: 0,
+    pageHeight: defaultHeight || 0,
+    pageWidth: defaultWidth || 0,
   });
   const [settingsActive, setSettingsActive] = useState(false);
   const $el = useRef(null);
 
   const signerStyles = useSignerColors(recipientIndex);
 
-  const advancedField = ['NUMBER', 'RADIO', 'CHECKBOX', 'DROPDOWN', 'TEXT'].includes(field.type);
+  const advancedField = [
+    'NUMBER',
+    'RADIO',
+    'CHECKBOX',
+    'DROPDOWN',
+    'TEXT',
+    'INITIALS',
+    'EMAIL',
+    'DATE',
+    'NAME',
+  ].includes(field.type);
 
   const calculateCoords = useCallback(() => {
     const $page = document.querySelector<HTMLElement>(
@@ -134,6 +155,8 @@ export const FieldItem = ({
       });
 
       if (isOutsideOfField) {
+        setSettingsActive(false);
+        onFieldDeactivate?.();
         onBlur?.();
       }
     };
@@ -172,10 +195,12 @@ export const FieldItem = ({
   return createPortal(
     <Rnd
       key={coords.pageX + coords.pageY + coords.pageHeight + coords.pageWidth}
-      className={cn('group z-20', {
+      className={cn('group', {
         'pointer-events-none': passive,
         'pointer-events-none cursor-not-allowed opacity-75': disabled,
-        'z-10': !active || disabled,
+        'z-50': active && !disabled,
+        'z-20': !active && !disabled,
+        'z-10': disabled,
       })}
       minHeight={fixedSize ? '' : minHeight || 'auto'}
       minWidth={fixedSize ? '' : minWidth || 'auto'}
@@ -186,27 +211,40 @@ export const FieldItem = ({
         width: fixedSize ? '' : coords.pageWidth,
       }}
       bounds={`${PDF_VIEWER_PAGE_SELECTOR}[data-page-number="${field.pageNumber}"]`}
-      onDragStart={() => setActive(true)}
-      onResizeStart={() => setActive(true)}
+      onDragStart={() => onFieldActivate?.()}
+      onResizeStart={() => onFieldActivate?.()}
       enableResizing={!fixedSize}
+      resizeHandleStyles={{
+        bottom: { bottom: -8, cursor: 'ns-resize' },
+        top: { top: -8, cursor: 'ns-resize' },
+        left: { cursor: 'ew-resize' },
+        right: { cursor: 'ew-resize' },
+      }}
       onResizeStop={(_e, _d, ref) => {
-        setActive(false);
+        onFieldDeactivate?.();
         onResize?.(ref);
       }}
       onDragStop={(_e, d) => {
-        setActive(false);
+        onFieldDeactivate?.();
         onMove?.(d.node);
       }}
     >
       <div
         className={cn(
           'relative flex h-full w-full items-center justify-center bg-white',
+          !hasErrors && signerStyles.default.base,
+          !hasErrors && signerStyles.default.fieldItem,
+          {
+            'rounded-lg border border-red-400 bg-red-400/20 shadow-[0_0_0_5px_theme(colors.red.500/10%),0_0_0_2px_theme(colors.red.500/40%),0_0_0_0.5px_theme(colors.red.500)]':
+              hasErrors,
+          },
           !fixedSize && '[container-type:size]',
-          signerStyles.default.base,
-          signerStyles.default.fieldItem,
         )}
-        onClick={() => {
+        data-error={hasErrors ? 'true' : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
           setSettingsActive((prev) => !prev);
+          onFieldActivate?.();
           onFocus?.();
         }}
         ref={$el}
@@ -243,7 +281,7 @@ export const FieldItem = ({
       </div>
 
       {!disabled && settingsActive && (
-        <div className="mt-1 flex justify-center">
+        <div className="z-[60] mt-1 flex justify-center">
           <div className="dark:bg-background group flex items-center justify-evenly gap-x-1 rounded-md border bg-gray-900 p-0.5">
             {advancedField && (
               <button

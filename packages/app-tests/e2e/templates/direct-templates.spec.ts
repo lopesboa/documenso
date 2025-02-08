@@ -67,6 +67,8 @@ test('[DIRECT_TEMPLATES]: create direct link for template', async ({ page }) => 
     await page.getByRole('button', { name: 'Enable direct link signing' }).click();
     await page.getByRole('button', { name: 'Create one automatically' }).click();
     await expect(page.getByRole('heading', { name: 'Direct Link Signing' })).toBeVisible();
+
+    await page.waitForTimeout(1000);
     await page.getByTestId('btn-dialog-close').click();
 
     // Expect badge to appear.
@@ -112,7 +114,6 @@ test('[DIRECT_TEMPLATES]: toggle direct template link', async ({ page }) => {
     await page.getByRole('switch').click();
     await page.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText('Direct link signing has been').first()).toBeVisible();
-    await page.getByLabel('Direct Link Signing', { exact: true }).press('Escape');
 
     // Check that the direct template link is no longer accessible.
     await page.goto(formatDirectTemplatePath(template.directLink?.token || ''));
@@ -259,7 +260,7 @@ test('[DIRECT_TEMPLATES]: use direct template link with 2 recipients', async ({ 
   const secondRecipient = await seedUser();
 
   const createTemplateOptions = {
-    Recipient: {
+    recipients: {
       createMany: {
         data: [
           {

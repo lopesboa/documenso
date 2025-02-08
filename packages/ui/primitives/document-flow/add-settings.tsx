@@ -6,13 +6,15 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Trans } from '@lingui/macro';
 import { InfoIcon } from 'lucide-react';
 import { useForm } from 'react-hook-form';
+import { match } from 'ts-pattern';
 
 import { DATE_FORMATS, DEFAULT_DOCUMENT_DATE_FORMAT } from '@documenso/lib/constants/date-formats';
+import { SUPPORTED_LANGUAGES } from '@documenso/lib/constants/i18n';
 import { DEFAULT_DOCUMENT_TIME_ZONE, TIME_ZONES } from '@documenso/lib/constants/time-zones';
+import type { TDocument } from '@documenso/lib/types/document';
 import { extractDocumentAuthMethods } from '@documenso/lib/utils/document-auth';
-import type { TeamMemberRole } from '@documenso/prisma/client';
+import { DocumentVisibility, TeamMemberRole } from '@documenso/prisma/client';
 import { DocumentStatus, type Field, type Recipient, SendStatus } from '@documenso/prisma/client';
-import type { DocumentWithData } from '@documenso/prisma/types/document-with-data';
 import {
   DocumentGlobalAuthAccessSelect,
   DocumentGlobalAuthAccessTooltip,
@@ -63,7 +65,7 @@ export type AddSettingsFormProps = {
   fields: Field[];
   isDocumentEnterprise: boolean;
   isDocumentPdfLoaded: boolean;
-  document: DocumentWithData;
+  document: TDocument;
   currentTeamMemberRole?: TeamMemberRole;
   onSubmit: (_data: TAddSettingsFormSchema) => void;
 };
@@ -95,9 +97,10 @@ export const AddSettingsFormPartial = ({
           TIME_ZONES.find((timezone) => timezone === document.documentMeta?.timezone) ??
           DEFAULT_DOCUMENT_TIME_ZONE,
         dateFormat:
-          DATE_FORMATS.find((format) => format.label === document.documentMeta?.dateFormat)
+          DATE_FORMATS.find((format) => format.value === document.documentMeta?.dateFormat)
             ?.value ?? DEFAULT_DOCUMENT_DATE_FORMAT,
         redirectUrl: document.documentMeta?.redirectUrl ?? '',
+        language: document.documentMeta?.language ?? 'en',
       },
     },
   });
@@ -107,6 +110,16 @@ export const AddSettingsFormPartial = ({
   const documentHasBeenSent = recipients.some(
     (recipient) => recipient.sendStatus === SendStatus.SENT,
   );
+
+  const canUpdateVisibility = match(currentTeamMemberRole)
+    .with(TeamMemberRole.ADMIN, () => true)
+    .with(
+      TeamMemberRole.MANAGER,
+      () =>
+        document.visibility === DocumentVisibility.EVERYONE ||
+        document.visibility === DocumentVisibility.MANAGER_AND_ABOVE,
+    )
+    .otherwise(() => false);
 
   // We almost always want to set the timezone to the user's local timezone to avoid confusion
   // when the document is signed.
@@ -167,6 +180,46 @@ export const AddSettingsFormPartial = ({
 
             <FormField
               control={form.control}
+              name="meta.language"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="inline-flex items-center">
+                    <Trans>Language</Trans>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <InfoIcon className="mx-2 h-4 w-4" />
+                      </TooltipTrigger>
+
+                      <TooltipContent className="text-foreground max-w-md space-y-2 p-4">
+                        Controls the language for the document, including the language to be used
+                        for email notifications, and the final certificate that is generated and
+                        attached to the document.
+                      </TooltipContent>
+                    </Tooltip>
+                  </FormLabel>
+
+                  <FormControl>
+                    <Select {...field} onValueChange={field.onChange}>
+                      <SelectTrigger className="bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+
+                      <SelectContent>
+                        {Object.entries(SUPPORTED_LANGUAGES).map(([code, language]) => (
+                          <SelectItem key={code} value={code}>
+                            {language.full}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="globalAccessAuth"
               render={({ field }) => (
                 <FormItem>
@@ -195,7 +248,8 @@ export const AddSettingsFormPartial = ({
 
                     <FormControl>
                       <DocumentVisibilitySelect
-                        currentMemberRole={currentTeamMemberRole}
+                        canUpdateVisibility={canUpdateVisibility}
+                        currentTeamMemberRole={currentTeamMemberRole}
                         {...field}
                         onValueChange={field.onChange}
                       />
@@ -231,7 +285,7 @@ export const AddSettingsFormPartial = ({
                 </AccordionTrigger>
 
                 <AccordionContent className="text-muted-foreground -mx-1 px-1 pt-2 text-sm leading-relaxed">
-                  <div className="flex flex-col space-y-6 ">
+                  <div className="flex flex-col space-y-6">
                     <FormField
                       control={form.control}
                       name="externalId"
